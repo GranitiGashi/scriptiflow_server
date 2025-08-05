@@ -66,31 +66,34 @@ async function register(req, res) {
 async function login(req, res) {
   const { email, password } = req.body;
 
-  try {
-    const record = await getUserByEmail(email);
-    if (!record || !(await verifyPassword(password, record.password_hash)))
-      return res.status(401).json({ detail: 'Invalid credentials' });
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  });
 
-    const userData = {
-      sub: email,
-      user_id: record.id,
-      role: record.role,
-      full_name: record.full_name,
-      company_name: record.company_name,
-      permissions: record.permissions || {}
-    };
-
-    const token = createToken(userData);
-
-    return res.status(200).json({
-      status: 'success',
-      access_token: token,
-      token_type: 'bearer',
-      user: userData
-    });
-  } catch (err) {
-    return res.status(500).json({ detail: err.message });
+  if (error) {
+    return res.status(401).json({ detail: error.message });
   }
+
+  // get user metadata from your users_app table
+  const { data: userData, error: userError } = await supabase
+    .from('users_app')
+    .select('*')
+    .eq('id', data.user.id)
+    .single();
+
+  if (userError) {
+    return res.status(500).json({ detail: userError.message });
+  }
+
+  // create your JWT token here with userData info if needed
+  // or return Supabase session tokens
+
+  return res.status(200).json({
+    status: 'success',
+    session: data.session, // contains access_token etc.
+    user: userData,
+  });
 }
 
 module.exports = { login, register };

@@ -7,6 +7,8 @@ const supabaseKey = process.env.SUPABASE_SERVICE_ROLE; // Use service role if yo
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-console.log("Supabase URL:", supabase);
+if (!supabaseUrl || !supabaseKey) {
+  throw new Error('Missing Supabase environment variables');
+}
 
 module.exports = supabase;

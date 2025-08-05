@@ -11,7 +11,6 @@ const authenticateToken = (req, res, next) => {
 
   try {
     const payload = verifyAccessToken(token);
-    console.log('Decoded Token:', payload); // Log decoded token
     req.user = payload;
     next();
   } catch (error) {
