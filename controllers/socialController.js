@@ -6,7 +6,7 @@ const { upsertSocialRecord, getSocialAccountsByUserId, getUserByEmail } = requir
 
 const FB_APP_ID = process.env.FACEBOOK_APP_ID;
 const FB_APP_SECRET = process.env.FACEBOOK_APP_SECRET;
-const BASE_DOMAIN = 'https://scriptiflow-server.onrender.com';  // e.g. yourdomain.com
+const BASE_DOMAIN = 'scriptiflow-server.onrender.com';  // e.g. yourdomain.com
 
 exports.getFbLoginUrl = async (req, res) => {
   const user_id = req.query.user_id;
