@@ -24,7 +24,7 @@ exports.getFbLoginUrl = async (req, res) => {
       client_id: FB_APP_ID,
       redirect_uri,
       state,
-      scope: 'pages_show_list,instagram_basic,pages_read_engagement,pages_manage_posts,instagram_manage_insights,publish_pages,instagram_content_publish',
+      scope: 'pages_show_list,instagram_basic,pages_read_engagement,pages_manage_posts,instagram_manage_insights,instagram_content_publish',
     });
 
   console.log('Generated auth URL:', authUrl); // Debug
@@ -74,7 +74,7 @@ exports.fbCallback = async (req, res) => {
       },
     });
     const longToken = longTokenRes.data.access_token;
-    console.log('Long-lived User Access Token:', longToken);
+    console.log('Long-lived User Access Token:', longTokenRes.data); // Log to verify expiration
 
     // Step 3: Get Pages with Extended Page Access Tokens
     const pagesRes = await axios.get('https://graph.facebook.com/v19.0/me/accounts', {
