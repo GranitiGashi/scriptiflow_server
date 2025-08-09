@@ -10,7 +10,12 @@ const BASE_DOMAIN = 'scriptiflow-server.onrender.com';  // e.g. yourdomain.com
 
 exports.getFbLoginUrl = async (req, res) => {
   const email  = req.query.user_email;
-  if (!user_id) return res.status(400).json({ error: "Missing user_id query parameter" });
+  const { user_id } = req.query.id; // or req.body if you POST it
+  if (!user_id) {
+    return res.status(400).json({ error: 'Missing user_id' });
+  }
+
+  console.log('user_id', user_id)
 
   const stateData = { email , nonce: uuidv4() };
   const state = encodeURIComponent(JSON.stringify(stateData));
@@ -21,9 +26,9 @@ exports.getFbLoginUrl = async (req, res) => {
       client_id: FB_APP_ID,
       redirect_uri,
       state,
-      scope: 'pages_show_list,pages_manage_posts'
+      scope: 'pages_show_list,instagram_basic,pages_read_engagement,pages_manage_posts,instagram_manage_insights'
     });
-
+console.log('authUrl', authUrl)
   return res.json({ auth_url: authUrl, state });
 };
 
