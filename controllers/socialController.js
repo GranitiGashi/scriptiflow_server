@@ -3,10 +3,16 @@ const axios = require('axios');
 const querystring = require('querystring');
 const supabase = require('../config/supabaseClient');
 const { upsertSocialRecord, getSocialAccountsByUserId, getUserByEmail } = require('../models/socialModel');
+const { createClient } = require('@supabase/supabase-js');
 
 const FB_APP_ID = process.env.FACEBOOK_APP_ID;
 const FB_APP_SECRET = process.env.FACEBOOK_APP_SECRET;
 const BASE_DOMAIN = process.env.BASE_DOMAIN || 'scriptiflow-server.onrender.com';
+
+// Initialize Supabase for JWT verification
+const supabaseJwt = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY, {
+  auth: { autoRefreshToken: false, persistSession: false },
+});
 
 exports.getFbLoginUrl = async (req, res) => {
   const { user_id } = req.query;
@@ -196,25 +202,54 @@ exports.fbCallback = async (req, res) => {
 };
 
 exports.getSocialAccounts = async (req, res) => {
-  const user_id = req.user?.id || req.query.user_id;
-  if (!user_id) return res.status(401).json({ error: 'Missing user_id' });
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    console.error('Missing or invalid Authorization header');
+    return res.status(401).json({ error: 'Unauthorized: Missing token' });
+  }
+
+  const token = authHeader.split(' ')[1];
 
   try {
-    const accounts = await getSocialAccountsByUserId(user_id);
-    const fbAccount = accounts.find((acc) => acc.provider === 'facebook');
-    const igAccount = accounts.find((acc) => acc.provider === 'instagram');
+    // Verify Supabase JWT
+    const { data: { user }, error } = await supabaseJwt.auth.getUser(token);
+    if (error || !user) {
+      console.error('Invalid token:', error?.message || 'No user found');
+      return res.status(401).json({ error: 'Unauthorized: Invalid token' });
+    }
 
-    return res.json({
-      facebook_id: fbAccount?.account_id || null,
-      facebook_name: fbAccount?.metadata?.page?.name || null,
-      facebook_profile_picture: fbAccount?.metadata?.profile_picture_url || null,
-      instagram_id: igAccount?.account_id || null,
-      instagram_username: igAccount?.metadata?.username || null,
-      instagram_profile_picture: igAccount?.metadata?.profile_picture_url || null,
-    });
+    const user_id = req.query.user_id;
+    if (!user_id) {
+      console.error('Missing user_id in query');
+      return res.status(400).json({ error: 'Missing user_id' });
+    }
+
+    if (user.id !== user_id) {
+      console.error('User ID mismatch:', { token_user_id: user.id, query_user_id: user_id });
+      return res.status(403).json({ error: 'Forbidden: User ID mismatch' });
+    }
+
+    try {
+      const accounts = await getSocialAccountsByUserId(user_id);
+      console.log('Fetched accounts:', accounts);
+      const fbAccount = accounts.find((acc) => acc.provider === 'facebook');
+      const igAccount = accounts.find((acc) => acc.provider === 'instagram');
+
+      return res.json({
+        facebook_id: fbAccount?.account_id || null,
+        facebook_name: fbAccount?.metadata?.page?.name || null,
+        facebook_profile_picture: fbAccount?.metadata?.profile_picture_url || null,
+        instagram_id: igAccount?.account_id || null,
+        instagram_username: igAccount?.metadata?.username || null,
+        instagram_profile_picture: igAccount?.metadata?.profile_picture_url || null,
+      });
+    } catch (err) {
+      console.error('getSocialAccounts error:', err.message, err.stack);
+      return res.status(500).json({ error: 'Internal server error', details: err.message });
+    }
   } catch (err) {
-    console.error('getSocialAccounts error:', err);
-    return res.status(500).json({ error: 'Internal server error' });
+    console.error('Token verification error:', err.message);
+    return res.status(401).json({ error: 'Unauthorized: Invalid token' });
   }
 };
 
