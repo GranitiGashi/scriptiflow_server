@@ -148,7 +148,8 @@ exports.getSocialAccountsByEmail = async (req, res) => {
 
   try {
     const user = await getUserByEmail(email);
-    if (!user) return res.status(404).json({ error: 'User not found' });
+    const stateData = { user_id: user.id, nonce: uuidv4() }
+    if (!user || !stateData) return res.status(404).json({ error: 'User not found' });
 
     const accounts = await getSocialAccountsByUserId(user.id);
     if (!accounts.length) return res.status(404).json({ error: 'No social accounts found for this user' });
