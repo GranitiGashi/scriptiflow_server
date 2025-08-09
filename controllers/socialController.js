@@ -37,6 +37,8 @@ exports.fbCallback = async (req, res) => {
     const decodedState = decodeURIComponent(state);
     const stateData = JSON.parse(decodedState);
 
+    console.log('stateData', stateData)
+
     const email = stateData.email;
     if (!email) throw new Error('Missing email in state');
 
@@ -44,6 +46,7 @@ exports.fbCallback = async (req, res) => {
     if (!user) throw new Error(`User not found for email: ${email}`);
 
     user_id = user.id;
+    console.log('user_id', user_id)
 
   } catch (e) {
     return res.status(400).json({ error: `Invalid state parameter: ${e.message}` });
