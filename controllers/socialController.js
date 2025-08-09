@@ -203,8 +203,8 @@ exports.fbCallback = async (req, res) => {
 
 exports.getSocialAccounts = async (req, res) => {
   const authHeader = req.headers.authorization;
+
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    console.error('Missing or invalid Authorization header');
     return res.status(401).json({ error: 'Unauthorized: Missing token' });
   }
 
@@ -212,10 +212,10 @@ exports.getSocialAccounts = async (req, res) => {
 
   try {
     // Verify Supabase JWT
-    const { data: { user }, error } = await supabaseJwt.auth.getUser(token);
-    if (error || !user) {
-      console.error('Invalid token:', error?.message || 'No user found');
-      return res.status(401).json({ error: 'Unauthorized: Invalid token' });
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (authError || !user) {
+      console.error('Auth Error:', authError?.message || 'User not found');
+      return res.status(401).json({ error: 'Unauthorized: Invalid or expired token' });
     }
 
     const user_id = req.query.user_id;
