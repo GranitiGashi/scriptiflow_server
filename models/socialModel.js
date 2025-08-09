@@ -1,7 +1,7 @@
 const supabase = require('../config/supabaseClient');
 
 // Upsert social record (insert or update)
-async function upsertSocialRecord({ user_id, provider, account_id, access_token, metadata = {}, token = null }) {
+async function upsertSocialRecord({ user_id, provider, account_id, access_token, metadata = {} }) {
   const { data: existing, error: fetchError } = await supabase
     .from('social_accounts')
     .select('*')
@@ -20,8 +20,7 @@ async function upsertSocialRecord({ user_id, provider, account_id, access_token,
       .update({
         access_token,
         metadata,
-        updated_at: new Date().toISOString(),
-        token,
+        updated_at: new Date().toISOString()
       })
       .eq('id', existing.id);
 
@@ -34,7 +33,6 @@ async function upsertSocialRecord({ user_id, provider, account_id, access_token,
       account_id,
       access_token,
       metadata,
-      token,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });
