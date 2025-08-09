@@ -10,7 +10,7 @@ const BASE_DOMAIN = 'scriptiflow-server.onrender.com';  // e.g. yourdomain.com
 
 exports.getFbLoginUrl = async (req, res) => {
   const email  = req.query.user_email;
-  const { user_id } = req.query.id; // or req.body if you POST it
+  const { user_id } = req.query.user_id; // or req.body if you POST it
   if (!user_id) {
     return res.status(400).json({ error: 'Missing user_id' });
   }
