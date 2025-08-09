@@ -24,11 +24,11 @@ exports.getFbLoginUrl = async (req, res) => {
       client_id: FB_APP_ID,
       redirect_uri,
       state,
-      scope: 'pages_show_list,instagram_basic,pages_read_engagement,pages_manage_posts,instagram_manage_insights,instagram_content_publish',
+      scope: 'pages_show_list,pages_manage_posts,instagram_basic,instagram_content_publish',
     });
 
-  console.log('Generated auth URL:', authUrl); // Debug
-  return res.json({ auth_url: authUrl });
+  console.log('Generated auth URL:', authUrl);
+  return res.json({ auth_url: authUrl, state });
 };
 
 exports.fbCallback = async (req, res) => {
@@ -61,6 +61,10 @@ exports.fbCallback = async (req, res) => {
         code,
       },
     });
+    if (!shortTokenRes.data.access_token) {
+      console.error('Failed to get short-lived token:', shortTokenRes.data);
+      return res.status(400).json({ error: 'Failed to get short-lived token' });
+    }
     const shortToken = shortTokenRes.data.access_token;
     console.log('Short-lived User Access Token:', shortToken);
 
@@ -73,10 +77,14 @@ exports.fbCallback = async (req, res) => {
         fb_exchange_token: shortToken,
       },
     });
+    if (!longTokenRes.data.access_token) {
+      console.error('Failed to get long-lived token:', longTokenRes.data);
+      return res.status(400).json({ error: 'Failed to get long-lived token' });
+    }
     const longToken = longTokenRes.data.access_token;
-    console.log('Long-lived User Access Token:', longTokenRes.data); // Log to verify expiration
+    console.log('Long-lived User Access Token:', longTokenRes.data);
 
-    // Step 3: Get Pages with Extended Page Access Tokens
+    // Step 3: Get Pages
     const pagesRes = await axios.get('https://graph.facebook.com/v19.0/me/accounts', {
       params: {
         fields: 'id,name,access_token',
@@ -96,19 +104,38 @@ exports.fbCallback = async (req, res) => {
     const page_access_token = page.access_token; // Non-expiring Page Access Token
     console.log('Selected Page:', { page_id, name: page.name });
 
-    // Step 4: Get Instagram Business Account linked to the page
+    // Step 4: Get Facebook Page profile picture
+    let fb_profile_picture_url = null;
+    try {
+      const pictureRes = await axios.get(`https://graph.facebook.com/v19.0/${page_id}/picture`, {
+        params: {
+          redirect: false,
+          access_token: page_access_token,
+        },
+      });
+      fb_profile_picture_url = pictureRes.data.data?.url || null;
+      console.log('Facebook Page profile picture:', fb_profile_picture_url);
+    } catch (err) {
+      console.error('Failed to fetch Facebook Page profile picture:', err.response?.data || err.message);
+    }
+
+    // Step 5: Get Instagram Business Account and username
     let ig_id = null;
+    let ig_username = null;
+    let ig_profile_picture_url = null;
     try {
       const igRes = await axios.get(`https://graph.facebook.com/v19.0/${page_id}`, {
         params: {
-          fields: 'instagram_business_account',
+          fields: 'instagram_business_account{username,profile_picture_url}',
           access_token: page_access_token,
         },
       });
       console.log('Instagram API response:', igRes.data);
-      if (igRes.data.instagram_business_account && igRes.data.instagram_business_account.id) {
+      if (igRes.status === 200 && igRes.data.instagram_business_account && igRes.data.instagram_business_account.id) {
         ig_id = igRes.data.instagram_business_account.id;
-        console.log('Found Instagram Business Account:', ig_id);
+        ig_username = igRes.data.instagram_business_account.username;
+        ig_profile_picture_url = igRes.data.instagram_business_account.profile_picture_url || null;
+        console.log('Found Instagram Business Account:', { id: ig_id, username: ig_username, profile_picture_url: ig_profile_picture_url });
       } else {
         console.log('No Instagram Business Account linked to Facebook Page:', page_id);
       }
@@ -116,32 +143,39 @@ exports.fbCallback = async (req, res) => {
       console.error('Failed to fetch Instagram Business Account:', err.response?.data || err.message);
     }
 
-    // Step 5: Save Facebook social account
+    // Step 6: Save Facebook social account
     try {
       await upsertSocialRecord({
         user_id,
         provider: 'facebook',
         account_id: page_id,
         access_token: page_access_token,
-        metadata: { page: { id: page_id, name: page.name } },
+        metadata: {
+          page,
+          profile_picture_url: fb_profile_picture_url,
+        },
       });
-      console.log('Saved Facebook account:', { user_id, page_id });
+      console.log('Saved Facebook account:', { user_id, page_id, page_name: page.name });
     } catch (err) {
       console.error('Failed to save Facebook account:', err);
       throw err; // Fail if Facebook save fails
     }
 
-    // Step 6: Save Instagram social account if exists
+    // Step 7: Save Instagram social account if exists
     if (ig_id) {
       try {
         await upsertSocialRecord({
           user_id,
           provider: 'instagram',
           account_id: ig_id,
-          access_token: page_access_token, // Use same Page Access Token for Instagram
-          metadata: { linked_fb_page_id: page_id },
+          access_token: page_access_token,
+          metadata: {
+            linked_fb_page_id: page_id,
+            username: ig_username,
+            profile_picture_url: ig_profile_picture_url,
+          },
         });
-        console.log('Saved Instagram account:', { user_id, ig_id });
+        console.log('Saved Instagram account:', { user_id, ig_id, ig_username });
       } catch (err) {
         console.error('Failed to save Instagram account:', err);
       }
@@ -172,7 +206,11 @@ exports.getSocialAccounts = async (req, res) => {
 
     return res.json({
       facebook_id: fbAccount?.account_id || null,
+      facebook_name: fbAccount?.metadata?.page?.name || null,
+      facebook_profile_picture: fbAccount?.metadata?.profile_picture_url || null,
       instagram_id: igAccount?.account_id || null,
+      instagram_username: igAccount?.metadata?.username || null,
+      instagram_profile_picture: igAccount?.metadata?.profile_picture_url || null,
     });
   } catch (err) {
     console.error('getSocialAccounts error:', err);
@@ -199,7 +237,11 @@ exports.getSocialAccountsByEmail = async (req, res) => {
     return res.json({
       email,
       facebook_id: fbAccount?.account_id || null,
+      facebook_name: fbAccount?.metadata?.page?.name || null,
+      facebook_profile_picture: fbAccount?.metadata?.profile_picture_url || null,
       instagram_id: igAccount?.account_id || null,
+      instagram_username: igAccount?.metadata?.username || null,
+      instagram_profile_picture: igAccount?.metadata?.profile_picture_url || null,
       access_token_fb: fbAccount?.access_token || null,
     });
   } catch (err) {
