@@ -1,9 +1,6 @@
-const { getUserByEmail, insertUserRecord } = require('../models/userModel');
-const { hashPassword, verifyPassword } = require('../utils/passwordUtils');
-const { createToken } = require('../utils/jwtUtils');
-const { v4: uuidv4 } = require('uuid');
-const  supabase  = require('../config/supabaseClient')
-const { verifyToken } = require('../utils/jwtUtils');
+// controllers/authController.js
+const { getUserByEmail } = require('../models/userModel');
+const supabase = require('../config/supabaseClient');
 
 async function register(req, res) {
   const authHeader = req.headers.authorization;
@@ -15,18 +12,36 @@ async function register(req, res) {
   const token = authHeader.split(' ')[1];
 
   try {
-    const decoded = verifyToken(token);
-    if (decoded.role !== 'admin') {
+    // Verify Supabase JWT
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (error || !user) {
+      console.error('Invalid token:', error?.message || 'No user found');
+      return res.status(401).json({ error: 'Unauthorized: Invalid token' });
+    }
+
+    // Check if user is an admin by querying users_app
+    const { data: userData, error: userError } = await supabase
+      .from('users_app')
+      .select('role')
+      .eq('id', user.id)
+      .single();
+
+    if (userError) {
+      console.error('Supabase User Fetch Error:', userError.message);
+      return res.status(500).json({ error: 'Failed to verify user role' });
+    }
+
+    if (userData.role !== 'admin') {
       return res.status(403).json({ error: 'Forbidden: Admins only' });
     }
 
     const { email, password, full_name, company_name, role = 'user', permissions = {} } = req.body;
 
-    // 1. Create user in Supabase Auth
+    // Create user in Supabase Auth
     const { data: authData, error: authError } = await supabase.auth.admin.createUser({
       email,
       password,
-      email_confirm: true
+      email_confirm: true,
     });
 
     if (authError) {
@@ -36,7 +51,7 @@ async function register(req, res) {
 
     const userId = authData.user.id;
 
-    // 2. Insert user into users_app table
+    // Insert user into users_app table
     const { error: insertError } = await supabase
       .from('users_app')
       .insert([
@@ -46,8 +61,8 @@ async function register(req, res) {
           full_name,
           company_name,
           role,
-          permissions
-        }
+          permissions,
+        },
       ]);
 
     if (insertError) {
@@ -62,38 +77,80 @@ async function register(req, res) {
   }
 }
 
-
 async function login(req, res) {
   const { email, password } = req.body;
 
-  const { data, error } = await supabase.auth.signInWithPassword({
+  const { data: sessionData, error: authError } = await supabase.auth.signInWithPassword({
     email,
     password,
   });
 
-  if (error) {
-    return res.status(401).json({ detail: error.message });
+  if (authError) {
+    console.error('Supabase Auth Error:', authError.message);
+    return res.status(401).json({ error: authError.message });
   }
 
-  // get user metadata from your users_app table
+  // Get user metadata from users_app table
   const { data: userData, error: userError } = await supabase
     .from('users_app')
     .select('*')
-    .eq('id', data.user.id)
+    .eq('id', sessionData.user.id)
     .single();
 
   if (userError) {
-    return res.status(500).json({ detail: userError.message });
+    console.error('Supabase User Fetch Error:', userError.message);
+    return res.status(500).json({ error: userError.message });
   }
-
-  // create your JWT token here with userData info if needed
-  // or return Supabase session tokens
 
   return res.status(200).json({
     status: 'success',
-    session: data.session, // contains access_token etc.
+    access_token: sessionData.session.access_token,
+    refresh_token: sessionData.session.refresh_token,
+    expires_in: sessionData.session.expires_in,
+    expires_at: sessionData.session.expires_at,
     user: userData,
   });
 }
 
-module.exports = { login, register };
+async function refresh(req, res) {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized: Missing refresh token' });
+  }
+
+  const refreshToken = authHeader.split(' ')[1];
+
+  try {
+    const { data: sessionData, error } = await supabase.auth.refreshSession({ refresh_token: refreshToken });
+    if (error) {
+      console.error('Supabase Refresh Error:', error.message);
+      return res.status(401).json({ error: 'Invalid refresh token' });
+    }
+
+    // Get user metadata from users_app table
+    const { data: userData, error: userError } = await supabase
+      .from('users_app')
+      .select('*')
+      .eq('id', sessionData.user.id)
+      .single();
+
+    if (userError) {
+      console.error('Supabase User Fetch Error:', userError.message);
+      return res.status(500).json({ error: userError.message });
+    }
+
+    return res.status(200).json({
+      access_token: sessionData.session.access_token,
+      refresh_token: sessionData.session.refresh_token,
+      expires_in: sessionData.session.expires_in,
+      expires_at: sessionData.session.expires_at,
+      user: userData,
+    });
+  } catch (err) {
+    console.error('Refresh error:', err.message);
+    return res.status(401).json({ error: 'Invalid refresh token' });
+  }
+}
+
+module.exports = { login, register, refresh };

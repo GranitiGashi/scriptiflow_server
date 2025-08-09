@@ -3,38 +3,54 @@ const axios = require('axios');
 const querystring = require('querystring');
 const supabase = require('../config/supabaseClient');
 const { upsertSocialRecord, getSocialAccountsByUserId, getUserByEmail } = require('../models/socialModel');
-const { createClient } = require('@supabase/supabase-js');
+require('dotenv').config();
 
 const FB_APP_ID = process.env.FACEBOOK_APP_ID;
 const FB_APP_SECRET = process.env.FACEBOOK_APP_SECRET;
 const BASE_DOMAIN = process.env.BASE_DOMAIN || 'scriptiflow-server.onrender.com';
 
-// Initialize Supabase for JWT verification
-const supabaseJwt = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY, {
-  auth: { autoRefreshToken: false, persistSession: false },
-});
-
 exports.getFbLoginUrl = async (req, res) => {
-  const { user_id } = req.query;
-  if (!user_id) {
-    return res.status(400).json({ error: 'Missing user_id' });
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    console.error('Missing or invalid Authorization header for getFbLoginUrl');
+    return res.status(401).json({ error: 'Unauthorized: Missing token' });
   }
 
-  const stateData = { user_id, nonce: uuidv4() };
-  const state = encodeURIComponent(JSON.stringify(stateData));
-  const redirect_uri = `https://${BASE_DOMAIN}/api/fb/callback`;
+  const token = authHeader.split(' ')[1];
 
-  const authUrl =
-    `https://www.facebook.com/v19.0/dialog/oauth?` +
-    querystring.stringify({
-      client_id: FB_APP_ID,
-      redirect_uri,
-      state,
-      scope: 'pages_show_list,pages_manage_posts,instagram_basic,instagram_content_publish',
-    });
+  try {
+    const { data: { user }, error: tokenError } = await supabase.auth.getUser(token);
+    if (tokenError || !user) {
+      console.error('Invalid token for getFbLoginUrl:', tokenError?.message || 'No user found');
+      return res.status(401).json({ error: 'Unauthorized: Invalid token' });
+    }
 
-  console.log('Generated auth URL:', authUrl);
-  return res.json({ auth_url: authUrl, state });
+    const { user_id } = req.query;
+    if (!user_id || user_id !== user.id) {
+      console.error('User ID mismatch in getFbLoginUrl:', { token_user_id: user.id, query_user_id: user_id });
+      return res.status(403).json({ error: 'Forbidden: User ID mismatch' });
+    }
+
+    const stateData = { user_id, nonce: uuidv4() };
+    const state = encodeURIComponent(JSON.stringify(stateData));
+    const redirect_uri = `https://${BASE_DOMAIN}/api/fb/callback`;
+
+    const authUrl =
+      `https://www.facebook.com/v19.0/dialog/oauth?` +
+      querystring.stringify({
+        client_id: FB_APP_ID,
+        redirect_uri,
+        state,
+        scope: 'pages_show_list,pages_manage_posts,instagram_basic,instagram_content_publish',
+      });
+
+    console.log('Generated auth URL:', authUrl);
+    return res.json({ auth_url: authUrl, state });
+  } catch (err) {
+    console.error('getFbLoginUrl error:', err.message);
+    return res.status(500).json({ error: 'Internal server error', details: err.message });
+  }
 };
 
 exports.fbCallback = async (req, res) => {
@@ -58,7 +74,6 @@ exports.fbCallback = async (req, res) => {
   const redirect_uri = `https://${BASE_DOMAIN}/api/fb/callback`;
 
   try {
-    // Step 1: Get short-lived User Access Token
     const shortTokenRes = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
       params: {
         client_id: FB_APP_ID,
@@ -74,7 +89,6 @@ exports.fbCallback = async (req, res) => {
     const shortToken = shortTokenRes.data.access_token;
     console.log('Short-lived User Access Token:', shortToken);
 
-    // Step 2: Exchange for long-lived User Access Token
     const longTokenRes = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
       params: {
         grant_type: 'fb_exchange_token',
@@ -90,7 +104,6 @@ exports.fbCallback = async (req, res) => {
     const longToken = longTokenRes.data.access_token;
     console.log('Long-lived User Access Token:', longTokenRes.data);
 
-    // Step 3: Get Pages
     const pagesRes = await axios.get('https://graph.facebook.com/v19.0/me/accounts', {
       params: {
         fields: 'id,name,access_token',
@@ -105,12 +118,11 @@ exports.fbCallback = async (req, res) => {
       return res.status(400).json({ error: 'No Facebook Pages found' });
     }
 
-    const page = pages[0]; // Save the first page
+    const page = pages[0];
     const page_id = page.id;
-    const page_access_token = page.access_token; // Non-expiring Page Access Token
+    const page_access_token = page.access_token;
     console.log('Selected Page:', { page_id, name: page.name });
 
-    // Step 4: Get Facebook Page profile picture
     let fb_profile_picture_url = null;
     try {
       const pictureRes = await axios.get(`https://graph.facebook.com/v19.0/${page_id}/picture`, {
@@ -125,7 +137,6 @@ exports.fbCallback = async (req, res) => {
       console.error('Failed to fetch Facebook Page profile picture:', err.response?.data || err.message);
     }
 
-    // Step 5: Get Instagram Business Account and username
     let ig_id = null;
     let ig_username = null;
     let ig_profile_picture_url = null;
@@ -149,7 +160,6 @@ exports.fbCallback = async (req, res) => {
       console.error('Failed to fetch Instagram Business Account:', err.response?.data || err.message);
     }
 
-    // Step 6: Save Facebook social account
     try {
       await upsertSocialRecord({
         user_id,
@@ -164,10 +174,9 @@ exports.fbCallback = async (req, res) => {
       console.log('Saved Facebook account:', { user_id, page_id, page_name: page.name });
     } catch (err) {
       console.error('Failed to save Facebook account:', err);
-      throw err; // Fail if Facebook save fails
+      throw err;
     }
 
-    // Step 7: Save Instagram social account if exists
     if (ig_id) {
       try {
         await upsertSocialRecord({
@@ -189,7 +198,6 @@ exports.fbCallback = async (req, res) => {
       console.log('Skipping Instagram account save: No ig_id found');
     }
 
-    // Redirect to frontend with success
     return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/connect?status=success`);
   } catch (err) {
     console.error('Facebook callback error:', err.response?.data || err.message);
@@ -205,17 +213,19 @@ exports.getSocialAccounts = async (req, res) => {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    console.error('Missing or invalid Authorization header');
     return res.status(401).json({ error: 'Unauthorized: Missing token' });
   }
 
   const token = authHeader.split(' ')[1];
+  const refreshToken = req.headers['x-refresh-token'] || ''; // Get refresh_token from header
 
   try {
     // Verify Supabase JWT
-    const { data: { user }, error } = await supabase.auth.getUser(token);
-    if (authError || !user) {
-      console.error('Auth Error:', authError?.message || 'User not found');
-      return res.status(401).json({ error: 'Unauthorized: Invalid or expired token' });
+    const { data: { user }, error: tokenError } = await supabase.auth.getUser(token);
+    if (tokenError || !user) {
+      console.error('Token verification error:', tokenError?.message || 'No user found');
+      return res.status(401).json({ error: 'Unauthorized: Invalid token' });
     }
 
     const user_id = req.query.user_id;
@@ -227,6 +237,16 @@ exports.getSocialAccounts = async (req, res) => {
     if (user.id !== user_id) {
       console.error('User ID mismatch:', { token_user_id: user.id, query_user_id: user_id });
       return res.status(403).json({ error: 'Forbidden: User ID mismatch' });
+    }
+
+    // Set Supabase session for RLS
+    const { error: sessionError } = await supabase.auth.setSession({
+      access_token: token,
+      refresh_token: refreshToken || null, // Fallback to null if not provided
+    });
+    if (sessionError) {
+      console.error('Supabase session error:', sessionError.message);
+      return res.status(401).json({ error: 'Unauthorized: Failed to set session', details: sessionError.message });
     }
 
     try {
@@ -249,21 +269,41 @@ exports.getSocialAccounts = async (req, res) => {
     }
   } catch (err) {
     console.error('Token verification error:', err.message);
-    return res.status(401).json({ error: 'Unauthorized: Invalid token' });
+    return res.status(401).json({ error: 'Unauthorized: Invalid token', details: err.message });
   }
 };
 
 exports.getSocialAccountsByEmail = async (req, res) => {
-  const email = req.query.email;
-  if (!email || !email.includes('@')) {
-    return res.status(400).json({ error: 'Invalid email address' });
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    console.error('Missing or invalid Authorization header for getSocialAccountsByEmail');
+    return res.status(401).json({ error: 'Unauthorized: Missing token' });
   }
 
-  try {
-    const user = await getUserByEmail(email);
-    if (!user) return res.status(404).json({ error: 'User not found' });
+  const token = authHeader.split(' ')[1];
 
-    const accounts = await getSocialAccountsByUserId(user.id);
+  try {
+    const { data: { user }, error: tokenError } = await supabase.auth.getUser(token);
+    if (tokenError || !user) {
+      console.error('Invalid token for getSocialAccountsByEmail:', tokenError?.message || 'No user found');
+      return res.status(401).json({ error: 'Unauthorized: Invalid token' });
+    }
+
+    const email = req.query.email;
+    if (!email || !email.includes('@')) {
+      return res.status(400).json({ error: 'Invalid email address' });
+    }
+
+    const userByEmail = await getUserByEmail(email);
+    if (!userByEmail) return res.status(404).json({ error: 'User not found' });
+
+    if (user.id !== userByEmail.id) {
+      console.error('User ID mismatch in getSocialAccountsByEmail:', { token_user_id: user.id, email_user_id: userByEmail.id });
+      return res.status(403).json({ error: 'Forbidden: User ID mismatch' });
+    }
+
+    const accounts = await getSocialAccountsByUserId(userByEmail.id);
     if (!accounts.length) return res.status(404).json({ error: 'No social accounts found for this user' });
 
     const fbAccount = accounts.find((acc) => acc.provider === 'facebook');
@@ -280,7 +320,7 @@ exports.getSocialAccountsByEmail = async (req, res) => {
       access_token_fb: fbAccount?.access_token || null,
     });
   } catch (err) {
-    console.error('getSocialAccountsByEmail error:', err);
-    return res.status(500).json({ error: 'Internal server error' });
+    console.error('getSocialAccountsByEmail error:', err.message);
+    return res.status(500).json({ error: 'Internal server error', details: err.message });
   }
 };
