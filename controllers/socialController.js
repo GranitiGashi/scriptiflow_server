@@ -24,15 +24,19 @@ exports.getFbLoginUrl = async (req, res) => {
       client_id: FB_APP_ID,
       redirect_uri,
       state,
-      scope: 'pages_show_list,instagram_basic,pages_read_engagement,pages_manage_posts,instagram_manage_insights',
+      scope: 'pages_show_list,instagram_basic,pages_read_engagement,pages_manage_posts,instagram_manage_insights,publish_pages,instagram_content_publish',
     });
 
+  console.log('Generated auth URL:', authUrl); // Debug
   return res.json({ auth_url: authUrl });
 };
 
 exports.fbCallback = async (req, res) => {
   const { code, state, error, error_message } = req.query;
-  if (error) return res.status(400).json({ error: error_message || 'Unknown error' });
+  if (error) {
+    console.error('OAuth error:', { error, error_message });
+    return res.status(400).json({ error: error_message || 'Unknown error' });
+  }
 
   let user_id;
   try {
@@ -41,57 +45,70 @@ exports.fbCallback = async (req, res) => {
     user_id = stateData.user_id;
     if (!user_id) throw new Error('Missing user_id in state');
   } catch (e) {
+    console.error('State parsing error:', e.message);
     return res.status(400).json({ error: `Invalid state parameter: ${e.message}` });
   }
 
-  const redirect_uri = `https://${process.env.BASE_DOMAIN || 'scriptiflow-server.onrender.com'}/api/fb/callback`;
+  const redirect_uri = `https://${BASE_DOMAIN}/api/fb/callback`;
 
   try {
-    // Step 1: Get short-lived token
+    // Step 1: Get short-lived User Access Token
     const shortTokenRes = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
       params: {
-        client_id: process.env.FACEBOOK_APP_ID,
+        client_id: FB_APP_ID,
         redirect_uri,
-        client_secret: process.env.FACEBOOK_APP_SECRET,
+        client_secret: FB_APP_SECRET,
         code,
       },
     });
     const shortToken = shortTokenRes.data.access_token;
+    console.log('Short-lived User Access Token:', shortToken);
 
-    // Step 2: Exchange for long-lived token
+    // Step 2: Exchange for long-lived User Access Token
     const longTokenRes = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
       params: {
         grant_type: 'fb_exchange_token',
-        client_id: process.env.FACEBOOK_APP_ID,
-        client_secret: process.env.FACEBOOK_APP_SECRET,
+        client_id: FB_APP_ID,
+        client_secret: FB_APP_SECRET,
         fb_exchange_token: shortToken,
       },
     });
     const longToken = longTokenRes.data.access_token;
+    console.log('Long-lived User Access Token:', longToken);
 
-    // Step 3: Get Pages
+    // Step 3: Get Pages with Extended Page Access Tokens
     const pagesRes = await axios.get('https://graph.facebook.com/v19.0/me/accounts', {
-      params: { access_token: longToken },
+      params: {
+        fields: 'id,name,access_token',
+        access_token: longToken,
+      },
     });
     const pages = pagesRes.data.data || [];
+    console.log('Pages response:', pages);
 
     if (!pages.length) {
+      console.error('No Facebook Pages found for user');
       return res.status(400).json({ error: 'No Facebook Pages found' });
     }
 
-    const page = pages[0];
+    const page = pages[0]; // Save the first page
     const page_id = page.id;
-    const page_token = page.access_token;
+    const page_access_token = page.access_token; // Non-expiring Page Access Token
+    console.log('Selected Page:', { page_id, name: page.name });
 
     // Step 4: Get Instagram Business Account linked to the page
     let ig_id = null;
     try {
       const igRes = await axios.get(`https://graph.facebook.com/v19.0/${page_id}`, {
-        params: { fields: 'instagram_business_account', access_token: page_token },
+        params: {
+          fields: 'instagram_business_account',
+          access_token: page_access_token,
+        },
       });
-      console.log('Instagram API response:', igRes.data); // Debug log
+      console.log('Instagram API response:', igRes.data);
       if (igRes.data.instagram_business_account && igRes.data.instagram_business_account.id) {
         ig_id = igRes.data.instagram_business_account.id;
+        console.log('Found Instagram Business Account:', ig_id);
       } else {
         console.log('No Instagram Business Account linked to Facebook Page:', page_id);
       }
@@ -100,14 +117,19 @@ exports.fbCallback = async (req, res) => {
     }
 
     // Step 5: Save Facebook social account
-    await upsertSocialRecord({
-      user_id,
-      provider: 'facebook',
-      account_id: page_id,
-      access_token: page_token,
-      metadata: { page },
-    });
-    console.log('Saved Facebook account:', { user_id, page_id });
+    try {
+      await upsertSocialRecord({
+        user_id,
+        provider: 'facebook',
+        account_id: page_id,
+        access_token: page_access_token,
+        metadata: { page: { id: page_id, name: page.name } },
+      });
+      console.log('Saved Facebook account:', { user_id, page_id });
+    } catch (err) {
+      console.error('Failed to save Facebook account:', err);
+      throw err; // Fail if Facebook save fails
+    }
 
     // Step 6: Save Instagram social account if exists
     if (ig_id) {
@@ -116,7 +138,7 @@ exports.fbCallback = async (req, res) => {
           user_id,
           provider: 'instagram',
           account_id: ig_id,
-          access_token: page_token,
+          access_token: page_access_token, // Use same Page Access Token for Instagram
           metadata: { linked_fb_page_id: page_id },
         });
         console.log('Saved Instagram account:', { user_id, ig_id });
@@ -138,8 +160,9 @@ exports.fbCallback = async (req, res) => {
     );
   }
 };
+
 exports.getSocialAccounts = async (req, res) => {
-  const { user_id } = req.query;
+  const user_id = req.user?.id || req.query.user_id;
   if (!user_id) return res.status(401).json({ error: 'Missing user_id' });
 
   try {
