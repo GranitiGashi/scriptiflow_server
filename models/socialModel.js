@@ -2,7 +2,6 @@ const supabase = require('../config/supabaseClient');
 
 // Upsert social record (insert or update)
 async function upsertSocialRecord({ user_id, provider, account_id, access_token, metadata = {}, token = null }) {
-  // Check if record exists
   const { data: existing, error: fetchError } = await supabase
     .from('social_accounts')
     .select('*')
@@ -11,38 +10,34 @@ async function upsertSocialRecord({ user_id, provider, account_id, access_token,
     .eq('account_id', account_id)
     .single();
 
-  if (fetchError && fetchError.code !== 'PGRST116') { // ignore "No rows" error
+  if (fetchError && fetchError.code !== 'PGRST116') {
     throw fetchError;
   }
 
   if (existing) {
-    // Update existing record
     const { error: updateError } = await supabase
       .from('social_accounts')
       .update({
         access_token,
         metadata,
         updated_at: new Date().toISOString(),
-        token
+        token,
       })
       .eq('id', existing.id);
 
     if (updateError) throw updateError;
     return existing.id;
   } else {
-    // Insert new record
-    const { error: insertError } = await supabase
-      .from('social_accounts')
-      .insert({
-        user_id,
-        provider,
-        account_id,
-        access_token,
-        metadata,
-        token,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      });
+    const { error: insertError } = await supabase.from('social_accounts').insert({
+      user_id,
+      provider,
+      account_id,
+      access_token,
+      metadata,
+      token,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
 
     if (insertError) throw insertError;
   }
@@ -59,7 +54,7 @@ async function getSocialAccountsByUserId(user_id) {
   return data;
 }
 
-// Get user record by email (you may already have this)
+// Get user record by email
 async function getUserByEmail(email) {
   const { data, error } = await supabase
     .from('users_app')
@@ -72,4 +67,3 @@ async function getUserByEmail(email) {
 }
 
 module.exports = { upsertSocialRecord, getSocialAccountsByUserId, getUserByEmail };
-    
