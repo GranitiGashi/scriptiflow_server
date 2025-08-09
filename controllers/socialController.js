@@ -9,10 +9,10 @@ const FB_APP_SECRET = process.env.FACEBOOK_APP_SECRET;
 const BASE_DOMAIN = 'scriptiflow-server.onrender.com';  // e.g. yourdomain.com
 
 exports.getFbLoginUrl = async (req, res) => {
-  const user_id = req.query.user_id;
+  const email  = req.query.user_email;
   if (!user_id) return res.status(400).json({ error: "Missing user_id query parameter" });
 
-  const stateData = { user_id, nonce: uuidv4() };
+  const stateData = { email , nonce: uuidv4() };
   const state = encodeURIComponent(JSON.stringify(stateData));
   const redirect_uri = `https://${BASE_DOMAIN}/api/fb/callback`;
 
