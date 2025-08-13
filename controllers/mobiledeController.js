@@ -90,10 +90,10 @@ exports.getMobileCredentials = async (req, res) => {
     }
 
     // Decrypt password if needed, but for security, return masked or omit
-    // const [iv, encryptedPassword] = data.encrypted_password.split(':');
-    // const password = decrypt(encryptedPassword, iv);
+    const [iv, encryptedPassword] = data.encrypted_password.split(':');
+    const password = decrypt(encryptedPassword, iv);
 
-    res.json({ username: data.username });
+    res.json({ username: data.username, password: password });
   } catch (err) {
     console.error('Server error:', err.message, err.stack);
     res.status(500).json({ error: 'Server error', details: err.message });
@@ -182,4 +182,45 @@ exports.deleteMobileCredentials = async (req, res) => {
     console.error('Server error:', err.message, err.stack);
     res.status(500).json({ error: 'Server error', details: err.message });
   }
+};
+
+exports.getUserCars = async (req, res) => {
+  const accessToken = req.headers.authorization?.split('Bearer ')[1];
+  const refreshToken = req.headers['x-refresh-token'];
+
+  const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
+    access_token: accessToken,
+    refresh_token: refreshToken,
+  });
+
+  if (sessionError || !sessionData.user) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const userId = sessionData.user.id;
+
+  const { data, error } = await supabase
+    .from('mobile_de_credentials')
+    .select('username, encrypted_password')
+    .eq('user_id', userId)
+    .single();
+
+  if (error || !data) {
+    return res.status(404).json({ error: 'No credentials found' });
+  }
+
+  const [iv, encryptedPassword] = data.encrypted_password.split(':');
+  const password = decrypt(encryptedPassword, iv);
+
+  // Call mobile.de API
+  const response = await fetch(`https://services.mobile.de/search-api/search`, {
+    method: 'GET',
+    headers: {
+      'Authorization': 'Basic ' + Buffer.from(`${data.username}:${password}`).toString('base64'),
+      'Accept': 'application/json'
+    }
+  });
+
+  const cars = await response.json();
+  res.json(cars);
 };
