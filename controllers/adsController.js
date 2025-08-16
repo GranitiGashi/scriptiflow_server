@@ -54,7 +54,7 @@ Language: ${language}`;
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        { role: 'system', content: 'Return strictly valid JSON only.' },
+        { role: 'system', content: 'Return strictly valid JSON only. Do not include code fences.' },
         { role: 'user', content: prompt },
       ],
       temperature: 0.4,
@@ -62,7 +62,22 @@ Language: ${language}`;
 
     let proposal;
     try {
-      proposal = JSON.parse(completion.choices[0].message.content);
+      let content = completion.choices?.[0]?.message?.content || '';
+      content = content.trim();
+      // Strip code fences if present
+      if (content.startsWith('```')) {
+        // Remove leading ```[lang]? and trailing ```
+        content = content.replace(/^```[a-zA-Z]*\s*/m, '').replace(/\s*```$/m, '').trim();
+      }
+      // Fallback: extract first JSON object
+      if (!(content.startsWith('{') || content.startsWith('['))) {
+        const firstBrace = content.indexOf('{');
+        const lastBrace = content.lastIndexOf('}');
+        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+          content = content.slice(firstBrace, lastBrace + 1);
+        }
+      }
+      proposal = JSON.parse(content);
     } catch (e) {
       return res.status(500).json({ error: 'AI returned invalid JSON' });
     }
