@@ -3,6 +3,7 @@ const axios = require('axios');
 const querystring = require('querystring');
 const supabase = require('../config/supabaseClient');
 const { upsertSocialRecord, getSocialAccountsByUserId, getUserByEmail } = require('../models/socialModel');
+const { upsertFacebookUserToken } = require('../models/socialTokenModel');
 require('dotenv').config();
 
 const FB_APP_ID = process.env.FACEBOOK_APP_ID;
@@ -42,7 +43,20 @@ exports.getFbLoginUrl = async (req, res) => {
         client_id: FB_APP_ID,
         redirect_uri,
         state,
-        scope: 'pages_show_list,pages_manage_posts,instagram_basic,instagram_content_publish',
+        // Include Marketing API + insights scopes for ads
+        scope: [
+          'pages_show_list',
+          'pages_manage_posts',
+          'pages_read_engagement',
+          'pages_manage_metadata',
+          'pages_manage_ads',
+          'ads_management',
+          'ads_read',
+          'business_management',
+          'instagram_basic',
+          'instagram_content_publish',
+          'instagram_manage_insights',
+        ].join(','),
       });
 
     console.log('Generated auth URL:', authUrl);
@@ -161,6 +175,9 @@ exports.fbCallback = async (req, res) => {
     }
 
     try {
+      // Store the long-lived USER token separately to avoid changing existing provider values
+      await upsertFacebookUserToken(user_id, longToken, { scope: 'user', issued_at: new Date().toISOString() });
+
       await upsertSocialRecord({
         user_id,
         provider: 'facebook',
