@@ -1,4 +1,5 @@
 const supabase = require('../config/supabaseClient');
+const supabaseAdmin = require('../config/supabaseAdmin');
 
 // Table: user_social_tokens
 // Columns: user_id (uuid, pk part), provider (text), token_type (text), access_token (text),
@@ -41,15 +42,41 @@ async function upsertFacebookUserToken(user_id, access_token, metadata = {}) {
 }
 
 async function getFacebookUserToken(user_id) {
-  const { data, error } = await supabase
+  // Primary: try with standard client (RLS-enabled)
+  try {
+    const { data, error } = await supabase
+      .from('user_social_tokens')
+      .select('access_token, metadata')
+      .eq('user_id', user_id)
+      .eq('provider', 'facebook')
+      .eq('token_type', 'user')
+      .maybeSingle();
+    if (error) throw error;
+    if (data) return data;
+  } catch (e) {
+    // fallthrough to admin
+  }
+
+  // Fallback: use admin client to bypass RLS and be more tolerant
+  const { data: strict, error: strictErr } = await supabaseAdmin
     .from('user_social_tokens')
     .select('access_token, metadata')
     .eq('user_id', user_id)
     .eq('provider', 'facebook')
     .eq('token_type', 'user')
     .maybeSingle();
-  if (error) throw error;
-  return data;
+  if (strictErr) throw strictErr;
+  if (strict) return strict;
+
+  // Last resort: any facebook token for this user
+  const { data: anyFb, error: anyErr } = await supabaseAdmin
+    .from('user_social_tokens')
+    .select('access_token, metadata')
+    .eq('user_id', user_id)
+    .eq('provider', 'facebook')
+    .maybeSingle();
+  if (anyErr) throw anyErr;
+  return anyFb || null;
 }
 
 module.exports = { upsertFacebookUserToken, getFacebookUserToken };

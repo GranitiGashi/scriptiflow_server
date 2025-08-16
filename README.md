@@ -5,7 +5,8 @@
 Add to your `.env`:
 
 - SUPABASE_URL
-- SUPABASE_KEY
+- SUPABASE_KEY (Anon key)
+- SUPABASE_SERVICE_ROLE_KEY (Service role key, required to read `user_social_tokens` if RLS blocks anon key)
 - JWT_SECRET
 - STRIPE_SECRET_KEY
 - FACEBOOK_APP_ID
@@ -38,3 +39,17 @@ create table if not exists public.user_social_tokens (
   primary key (user_id, provider, token_type)
 );
 ```
+
+If Row Level Security (RLS) is enabled on `user_social_tokens`, add a policy to allow users to read their own tokens:
+
+```sql
+alter table public.user_social_tokens enable row level security;
+
+create policy "allow users to read their own tokens"
+on public.user_social_tokens
+for select
+to authenticated
+using (user_id = auth.uid());
+```
+
+Alternatively, set `SUPABASE_SERVICE_ROLE_KEY` in the backend environment so the server can fetch tokens using the admin client.

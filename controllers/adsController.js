@@ -14,6 +14,13 @@ async function getSupabaseUser(req) {
   const token = auth.split(' ')[1];
   const { data: { user }, error } = await supabase.auth.getUser(token);
   if (error || !user) return { error: { status: 401, message: 'Unauthorized: Invalid token' } };
+  // Ensure RLS policies see this user for subsequent queries
+  try {
+    const refreshToken = req.headers['x-refresh-token'] || null;
+    await supabase.auth.setSession({ access_token: token, refresh_token: refreshToken });
+  } catch (_) {
+    // ignore; proceed best-effort
+  }
   return { user, accessToken: token };
 }
 
