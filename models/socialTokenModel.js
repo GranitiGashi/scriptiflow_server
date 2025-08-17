@@ -143,6 +143,58 @@ async function getFacebookUserToken(user_id) {
       console.log('⚠️ [getFacebookUserToken] Debug query failed:', debugErr.message);
     }
     
+    // Database connection test: Try to insert and read back a test record
+    console.log('🔍 [getFacebookUserToken] Testing database write/read cycle...');
+    try {
+      const testToken = `test_token_${Date.now()}`;
+      
+      // Try to insert a test record
+      const { error: insertErr } = await supabaseAdmin
+        .from('user_social_tokens')
+        .insert({
+          user_id,
+          provider: 'test',
+          token_type: 'debug',
+          access_token: testToken,
+          metadata: { debug: true },
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        });
+      
+      if (!insertErr) {
+        console.log('✅ [getFacebookUserToken] Test insert successful');
+        
+        // Try to read it back
+        const { data: testRead, error: readErr } = await supabaseAdmin
+          .from('user_social_tokens')
+          .select('access_token')
+          .eq('user_id', user_id)
+          .eq('provider', 'test')
+          .eq('token_type', 'debug')
+          .maybeSingle();
+        
+        if (!readErr && testRead) {
+          console.log('✅ [getFacebookUserToken] Test read successful - database connection works!');
+          
+          // Clean up test record
+          await supabaseAdmin
+            .from('user_social_tokens')
+            .delete()
+            .eq('user_id', user_id)
+            .eq('provider', 'test')
+            .eq('token_type', 'debug');
+          
+          console.log('🧹 [getFacebookUserToken] Test record cleaned up');
+        } else {
+          console.log('❌ [getFacebookUserToken] Test read failed:', readErr?.message);
+        }
+      } else {
+        console.log('❌ [getFacebookUserToken] Test insert failed:', insertErr.message);
+      }
+    } catch (testErr) {
+      console.log('❌ [getFacebookUserToken] Database test failed:', testErr.message);
+    }
+    
     // Last resort: Direct SQL query to bypass any RLS issues
     console.log('🔍 [getFacebookUserToken] Trying direct SQL query...');
     try {
