@@ -92,6 +92,22 @@ async function getFacebookUserToken(user_id) {
   }
 
   console.log('🔍 [getFacebookUserToken] Trying with admin client (any Facebook token)...');
+  
+  // Debug: First check if admin client can read the table at all
+  try {
+    const { data: testQuery, error: testError } = await supabaseAdmin
+      .from('user_social_tokens')
+      .select('user_id, provider, token_type')
+      .limit(1);
+    console.log('🔍 [getFacebookUserToken] Admin client table access test:', {
+      canReadTable: !testError,
+      error: testError?.message || null,
+      recordCount: testQuery?.length || 0
+    });
+  } catch (testErr) {
+    console.log('❌ [getFacebookUserToken] Admin client table access failed:', testErr.message);
+  }
+  
   // Last resort: any facebook token for this user
   const { data: anyFb, error: anyErr } = await supabaseAdmin
     .from('user_social_tokens')
@@ -125,6 +141,32 @@ async function getFacebookUserToken(user_id) {
       });
     } catch (debugErr) {
       console.log('⚠️ [getFacebookUserToken] Debug query failed:', debugErr.message);
+    }
+    
+    // Last resort: Direct SQL query to bypass any RLS issues
+    console.log('🔍 [getFacebookUserToken] Trying direct SQL query...');
+    try {
+      const { data: sqlResult, error: sqlError } = await supabaseAdmin.rpc('get_user_facebook_token', {
+        p_user_id: user_id
+      });
+      
+      if (!sqlError && sqlResult && sqlResult.length > 0) {
+        const token = sqlResult[0];
+        console.log('✅ [getFacebookUserToken] Found token via direct SQL:', {
+          hasToken: !!token.access_token,
+          tokenLength: token.access_token?.length || 0
+        });
+        return {
+          access_token: token.access_token,
+          metadata: token.metadata,
+          provider: token.provider,
+          token_type: token.token_type,
+          created_at: token.created_at,
+          expires_at: token.expires_at
+        };
+      }
+    } catch (sqlErr) {
+      console.log('⚠️ [getFacebookUserToken] Direct SQL query failed (function may not exist):', sqlErr.message);
     }
   }
   
