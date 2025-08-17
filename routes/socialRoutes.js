@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const socialController = require('../controllers/socialController');
-const authMiddleware = require('../middleware/authenticateToken');
 
 router.get('/fb/login-url', socialController.getFbLoginUrl);
 router.get('/fb/callback', socialController.fbCallback);

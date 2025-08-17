@@ -1,5 +1,5 @@
 // backend/middleware/auth.js
-const { verifyAccessToken } = require('../utils/jwt');
+const { verifyToken } = require('../utils/jwtUtils');
 
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
@@ -10,7 +10,7 @@ const authenticateToken = (req, res, next) => {
   }
 
   try {
-    const payload = verifyAccessToken(token);
+    const payload = verifyToken(token);
     req.user = payload;
     next();
   } catch (error) {
