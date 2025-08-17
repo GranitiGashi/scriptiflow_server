@@ -12,6 +12,20 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Add request logging middleware
+app.use((req, res, next) => {
+  console.log(`📥 [${new Date().toISOString()}] ${req.method} ${req.path}`, {
+    headers: {
+      authorization: req.headers.authorization ? `Bearer ${req.headers.authorization.split(' ')[1]?.substring(0, 20)}...` : 'None',
+      'x-refresh-token': req.headers['x-refresh-token'] ? 'Present' : 'None',
+      'user-agent': req.headers['user-agent']?.substring(0, 50) || 'None'
+    },
+    query: req.query,
+    bodyKeys: Object.keys(req.body || {})
+  });
+  next();
+});
+
 app.use('/api', authRoutes);
 app.use('/api', socialRoutes);
 app.use('/api', paymentRoutes);

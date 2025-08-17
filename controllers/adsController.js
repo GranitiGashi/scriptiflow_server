@@ -7,39 +7,91 @@ const { getFacebookUserToken } = require('../models/socialTokenModel');
 const GRAPH_BASE = 'https://graph.facebook.com/v19.0';
 
 async function getSupabaseUser(req) {
+  console.log('🔍 [getSupabaseUser] Starting authentication check...');
+  
   const auth = req.headers.authorization;
+  console.log('🔍 [getSupabaseUser] Auth header present:', !!auth);
+  
   if (!auth || !auth.startsWith('Bearer ')) {
+    console.log('❌ [getSupabaseUser] Missing or invalid authorization header');
     return { error: { status: 401, message: 'Unauthorized: Missing token' } };
   }
+  
   const token = auth.split(' ')[1];
+  console.log('🔍 [getSupabaseUser] Token extracted, length:', token?.length || 0);
+  
   const { data: { user }, error } = await supabase.auth.getUser(token);
-  if (error || !user) return { error: { status: 401, message: 'Unauthorized: Invalid token' } };
+  console.log('🔍 [getSupabaseUser] Supabase getUser result:', {
+    user: user ? { id: user.id, email: user.email } : null,
+    error: error?.message || null
+  });
+  
+  if (error || !user) {
+    console.log('❌ [getSupabaseUser] Failed to get user from Supabase:', error?.message);
+    return { error: { status: 401, message: 'Unauthorized: Invalid token' } };
+  }
+  
   // Ensure RLS policies see this user for subsequent queries
   try {
     const refreshToken = req.headers['x-refresh-token'] || null;
+    console.log('🔍 [getSupabaseUser] Setting session with refresh token present:', !!refreshToken);
     await supabase.auth.setSession({ access_token: token, refresh_token: refreshToken });
-  } catch (_) {
-    // ignore; proceed best-effort
+  } catch (sessionError) {
+    console.log('⚠️ [getSupabaseUser] Session setup failed (proceeding anyway):', sessionError.message);
   }
+  
+  console.log('✅ [getSupabaseUser] Authentication successful for user:', user.id);
   return { user, accessToken: token };
 }
 
 exports.listAdAccounts = async (req, res) => {
+  console.log('🚀 [listAdAccounts] Starting ad accounts request...');
+  
   try {
+    console.log('🔍 [listAdAccounts] Getting Supabase user...');
     const { user, error } = await getSupabaseUser(req);
-    if (error) return res.status(error.status).json({ error: error.message });
+    
+    if (error) {
+      console.log('❌ [listAdAccounts] Authentication failed:', error.message);
+      return res.status(error.status).json({ error: error.message });
+    }
 
+    console.log('🔍 [listAdAccounts] Looking up Facebook token for user:', user.id);
     const tokenRecord = await getFacebookUserToken(user.id);
+    console.log('🔍 [listAdAccounts] Facebook token lookup result:', {
+      tokenFound: !!tokenRecord,
+      accessTokenPresent: !!tokenRecord?.access_token,
+      tokenLength: tokenRecord?.access_token?.length || 0,
+      provider: tokenRecord?.provider || null,
+      tokenType: tokenRecord?.token_type || null,
+      createdAt: tokenRecord?.created_at || null,
+      expiresAt: tokenRecord?.expires_at || null
+    });
+
     if (!tokenRecord?.access_token) {
+      console.log('❌ [listAdAccounts] No Facebook access token found for user:', user.id);
       return res.status(400).json({ error: 'Facebook user token not found. Please reconnect Facebook.' });
     }
 
+    console.log('🔍 [listAdAccounts] Making Facebook API request to:', `${GRAPH_BASE}/me/adaccounts`);
     const { data } = await axios.get(`${GRAPH_BASE}/me/adaccounts`, {
       params: { fields: 'id,name,currency,account_status', access_token: tokenRecord.access_token },
     });
+    
+    console.log('✅ [listAdAccounts] Facebook API response:', {
+      adAccountCount: data?.data?.length || 0,
+      hasData: !!data?.data
+    });
+    
     res.json(data);
   } catch (err) {
-    console.error('listAdAccounts error:', err.response?.data || err.message);
+    console.error('❌ [listAdAccounts] Error occurred:', {
+      message: err.message,
+      status: err.response?.status,
+      statusText: err.response?.statusText,
+      responseData: err.response?.data,
+      stack: err.stack
+    });
     res.status(500).json({ error: 'Failed to list ad accounts' });
   }
 };
