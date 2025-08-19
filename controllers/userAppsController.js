@@ -1,7 +1,7 @@
 const supabase = require('../config/supabaseClient');
 
 // Get user's apps
-exports.getUserApps = async (req, res) => {
+const getUserApps = async (req, res) => {
   const authHeader = req.headers.authorization;
   
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -64,7 +64,7 @@ exports.getUserApps = async (req, res) => {
 };
 
 // Add or update user app
-exports.upsertUserApp = async (req, res) => {
+const upsertUserApp = async (req, res) => {
   const authHeader = req.headers.authorization;
   
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -136,7 +136,7 @@ exports.upsertUserApp = async (req, res) => {
 };
 
 // Delete user app
-exports.deleteUserApp = async (req, res) => {
+const deleteUserApp = async (req, res) => {
   const authHeader = req.headers.authorization;
   
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -192,4 +192,9 @@ async function copyDefaultAppsForUser(userId) {
   }
 }
 
-module.exports = { copyDefaultAppsForUser };
+module.exports = {
+  getUserApps,
+  upsertUserApp,
+  deleteUserApp,
+  copyDefaultAppsForUser
+};

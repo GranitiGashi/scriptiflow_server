@@ -19,7 +19,7 @@ async function isAdmin(userId) {
 }
 
 // Get all users for admin
-exports.getUsers = async (req, res) => {
+const getUsers = async (req, res) => {
   const authHeader = req.headers.authorization;
   
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -65,7 +65,7 @@ exports.getUsers = async (req, res) => {
 };
 
 // Get user's apps (admin view)
-exports.getUserApps = async (req, res) => {
+const getUserApps = async (req, res) => {
   const authHeader = req.headers.authorization;
   
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -114,7 +114,7 @@ exports.getUserApps = async (req, res) => {
 };
 
 // Create app for specific user (admin only)
-exports.createUserApp = async (req, res) => {
+const createUserApp = async (req, res) => {
   const authHeader = req.headers.authorization;
   
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -191,7 +191,7 @@ exports.createUserApp = async (req, res) => {
 };
 
 // Update user app (admin only)
-exports.updateUserApp = async (req, res) => {
+const updateUserApp = async (req, res) => {
   const authHeader = req.headers.authorization;
   
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -251,7 +251,7 @@ exports.updateUserApp = async (req, res) => {
 };
 
 // Delete user app (admin only)
-exports.deleteUserApp = async (req, res) => {
+const deleteUserApp = async (req, res) => {
   const authHeader = req.headers.authorization;
   
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -297,4 +297,11 @@ exports.deleteUserApp = async (req, res) => {
   }
 };
 
-module.exports = { isAdmin };
+module.exports = {
+  isAdmin,
+  getUsers,
+  getUserApps,
+  createUserApp,
+  updateUserApp,
+  deleteUserApp
+};
