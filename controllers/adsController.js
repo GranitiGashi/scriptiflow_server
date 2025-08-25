@@ -165,8 +165,16 @@ exports.createCampaign = async (req, res) => {
         .eq('user_id', user.id)
         .maybeSingle();
       if (!pmRow?.stripe_customer_id || !pmRow?.payment_method_id) {
-        return res.status(400).json({ error: 'No default payment method on file' });
+        return res.status(400).json({ error: 'No default payment method on file. Please add a payment method first.' });
       }
+
+      // Validate customer exists in current Stripe environment
+      try {
+        await stripe.customers.retrieve(pmRow.stripe_customer_id);
+      } catch (err) {
+        return res.status(400).json({ error: 'Payment method invalid. Please re-add your payment method.' });
+      }
+
       // Create a one-time charge
       await stripe.paymentIntents.create({
         amount: charge_amount_cents,
