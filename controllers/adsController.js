@@ -231,6 +231,7 @@ exports.createCampaign = async (req, res) => {
         end_time,
         targeting: JSON.stringify(targeting),
         status: 'PAUSED',
+        special_ad_categories: JSON.stringify(plan.special_ad_categories || []), // Required by Facebook
         access_token,
       },
     });
