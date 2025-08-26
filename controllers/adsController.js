@@ -52,7 +52,7 @@ exports.listAdAccounts = async (req, res) => {
     const { user, error } = await getSupabaseUser(req);
     if (error) return res.status(error.status).json({ error: error.message });
 
-    // Return agency ad accounts instead of client ad accounts
+    // Return agency ad accounts with full act_ prefix
     const AGENCY_AD_ACCOUNTS = [
       {
         id: 'act_2830100050563421',
@@ -203,7 +203,8 @@ exports.createCampaign = async (req, res) => {
     const access_token = tokenRecord.access_token;
 
     // 1) Create campaign
-    const campaignRes = await axios.post(`${GRAPH_BASE}/act_${ad_account_id}/campaigns`, null, {
+    // Use ad_account_id directly (should already include act_ prefix)
+    const campaignRes = await axios.post(`${GRAPH_BASE}/${ad_account_id}/campaigns`, null, {
       params: {
         name: creative?.campaign_name || `Car Campaign ${new Date().toISOString()}`,
         objective: plan.objective || 'LINK_CLICKS',
@@ -219,7 +220,7 @@ exports.createCampaign = async (req, res) => {
     const daily_budget = plan.daily_budget_cents || 1000; // in cents
     const targeting = plan.targeting || { geo_locations: { countries: [plan.country || 'DE'] } };
 
-    const adsetRes = await axios.post(`${GRAPH_BASE}/act_${ad_account_id}/adsets`, null, {
+    const adsetRes = await axios.post(`${GRAPH_BASE}/${ad_account_id}/adsets`, null, {
       params: {
         name: creative?.adset_name || 'Car Ad Set',
         campaign_id,
@@ -246,7 +247,7 @@ exports.createCampaign = async (req, res) => {
       return res.status(400).json({ error: 'Landing page URL is required for ad creative' });
     }
 
-    const creativeRes = await axios.post(`${GRAPH_BASE}/act_${ad_account_id}/adcreatives`, null, {
+    const creativeRes = await axios.post(`${GRAPH_BASE}/${ad_account_id}/adcreatives`, null, {
       params: {
         name: creative?.name || 'Car Creative',
         object_story_spec: JSON.stringify({
@@ -266,7 +267,7 @@ exports.createCampaign = async (req, res) => {
     const creative_id = creativeRes.data.id;
 
     // 4) Create ad
-    const adRes = await axios.post(`${GRAPH_BASE}/act_${ad_account_id}/ads`, null, {
+    const adRes = await axios.post(`${GRAPH_BASE}/${ad_account_id}/ads`, null, {
       params: {
         name: creative?.ad_name || 'Car Ad',
         adset_id,

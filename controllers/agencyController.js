@@ -4,10 +4,10 @@ const { getFacebookUserToken } = require('../models/socialTokenModel');
 
 const GRAPH_BASE = 'https://graph.facebook.com/v19.0';
 
-// Agency ad accounts - replace with your actual ad account IDs
+// Agency ad accounts - include full act_ prefix
 const AGENCY_AD_ACCOUNTS = [
   {
-    id: process.env.AGENCY_AD_ACCOUNT_1 || 'act_YOUR_AD_ACCOUNT_1',
+    id: process.env.AGENCY_AD_ACCOUNT_1 || 'act_2830100050563421',
     name: 'Agency Account 1',
     currency: 'EUR',
     account_status: 1
