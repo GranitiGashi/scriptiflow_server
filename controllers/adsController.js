@@ -94,7 +94,7 @@ REQUIRED FIELDS:
 - placements: ["facebook_feeds", "instagram_feeds", "facebook_reels"]
 - duration_days: number (3-30)
 - daily_budget_cents: number (1000-10000 in cents EUR)
-- special_ad_categories: [] (empty array for general car sales)
+- special_ad_categories: ['none'] (for general car sales)
 - primary_text: string (ad copy)
 - headline: string (short headline)
 - description: string (longer description)  
