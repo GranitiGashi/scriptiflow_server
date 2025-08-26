@@ -86,11 +86,30 @@ exports.recommendAdPlan = async (req, res) => {
     const { car, objective, country = 'DE', language = 'de' } = req.body;
     if (!car || !car.title) return res.status(400).json({ error: 'Missing car payload' });
 
-    const prompt = `You are an ads strategist for car dealerships. Given this car listing, propose: objective (Traffic/Leads/Messages), target audience (interests, age, gender, radius around location), placements (FB/IG feeds, reels), recommended duration (days), daily budget (in EUR), and ad creative: primary text, headline, description, CTA. Be concise JSON.
+    const prompt = `You are an ads strategist for car dealerships. Given this car listing, propose a complete Facebook ad plan as JSON with these fields:
+
+REQUIRED FIELDS:
+- objective: "TRAFFIC", "LEAD_GENERATION", or "MESSAGES"  
+- target_audience: {interests: [], age_min: 18, age_max: 65, genders: [1,2]}
+- placements: ["facebook_feeds", "instagram_feeds", "facebook_reels"]
+- duration_days: number (3-30)
+- daily_budget_cents: number (1000-10000 in cents EUR)
+- special_ad_categories: [] (empty array for general car sales)
+- primary_text: string (ad copy)
+- headline: string (short headline)
+- description: string (longer description)  
+- cta: "LEARN_MORE", "CONTACT_US", "CALL_NOW"
+- campaign_name: string
+- ad_name: string
+- adset_name: string
+- creative_name: string
+
 Car: ${JSON.stringify(car)}
-Preferred objective: ${objective || 'auto'}
+Preferred objective: ${objective || 'TRAFFIC'}
 Country: ${country}
-Language: ${language}`;
+Language: ${language}
+
+Return ONLY valid JSON with all required fields.`;
 
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
@@ -220,6 +239,10 @@ exports.createCampaign = async (req, res) => {
     const daily_budget = plan.daily_budget_cents || 1000; // in cents
     const targeting = plan.targeting || { geo_locations: { countries: [plan.country || 'DE'] } };
 
+    // Ensure special_ad_categories is properly formatted
+    const specialAdCategories = plan.special_ad_categories || [];
+    console.log('Special ad categories:', specialAdCategories);
+
     const adsetRes = await axios.post(`${GRAPH_BASE}/${ad_account_id}/adsets`, null, {
       params: {
         name: creative?.adset_name || 'Car Ad Set',
@@ -231,7 +254,7 @@ exports.createCampaign = async (req, res) => {
         end_time,
         targeting: JSON.stringify(targeting),
         status: 'PAUSED',
-        special_ad_categories: ["NONE"], // Required by Facebook
+        special_ad_categories: JSON.stringify(specialAdCategories), // Required by Facebook
         access_token,
       },
     });
