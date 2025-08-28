@@ -18,9 +18,6 @@ async function isAdmin(userId) {
   }
 }
 
-// Get all users for admin
-router.get("/users", adminController.getUsers);
-
 // Get user's apps (admin view)
 const getUserApps = async (req, res) => {
   const authHeader = req.headers.authorization;
