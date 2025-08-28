@@ -43,19 +43,18 @@ exports.getFbLoginUrl = async (req, res) => {
         client_id: FB_APP_ID,
         redirect_uri,
         state,
-        // Include Marketing API + insights scopes for ads
+        // Agency model: Focus on page access, not ad account access
         scope: [
-          'pages_show_list',
-          'pages_manage_posts',
-          'pages_read_engagement',
-          'pages_manage_metadata',
-          'pages_manage_ads',
-          'ads_management',
-          'ads_read',
-          'business_management',
-          'instagram_basic',
-          'instagram_content_publish',
-          'instagram_manage_insights',
+          'pages_show_list',           // List their pages
+          'pages_manage_posts',        // Post on their behalf  
+          'pages_read_engagement',     // Read page insights
+          'pages_manage_metadata',     // Manage page info
+          'pages_manage_ads',          // Run ads from their pages
+          'instagram_basic',           // Basic Instagram access
+          'instagram_content_publish', // Post to Instagram
+          'instagram_manage_insights', // Instagram insights
+          // Note: Removed ads_management, ads_read, business_management
+          // These are not needed since we use OUR ad accounts
         ].join(','),
       });
 

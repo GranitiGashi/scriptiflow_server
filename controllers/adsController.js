@@ -44,54 +44,36 @@ async function getSupabaseUser(req) {
   return { user, accessToken: token };
 }
 
+// DEPRECATED: In agency model, we use agency ad accounts instead of client ad accounts
 exports.listAdAccounts = async (req, res) => {
-  console.log('🚀 [listAdAccounts] Starting ad accounts request...');
+  console.log('🚀 [listAdAccounts] Redirecting to agency ad accounts...');
   
   try {
-    console.log('🔍 [listAdAccounts] Getting Supabase user...');
     const { user, error } = await getSupabaseUser(req);
-    
-    if (error) {
-      console.log('❌ [listAdAccounts] Authentication failed:', error.message);
-      return res.status(error.status).json({ error: error.message });
-    }
+    if (error) return res.status(error.status).json({ error: error.message });
 
-    console.log('🔍 [listAdAccounts] Looking up Facebook token for user:', user.id);
-    const tokenRecord = await getFacebookUserToken(user.id);
-    console.log('🔍 [listAdAccounts] Facebook token lookup result:', {
-      tokenFound: !!tokenRecord,
-      accessTokenPresent: !!tokenRecord?.access_token,
-      tokenLength: tokenRecord?.access_token?.length || 0,
-      provider: tokenRecord?.provider || null,
-      tokenType: tokenRecord?.token_type || null,
-      createdAt: tokenRecord?.created_at || null,
-      expiresAt: tokenRecord?.expires_at || null
-    });
-
-    if (!tokenRecord?.access_token) {
-      console.log('❌ [listAdAccounts] No Facebook access token found for user:', user.id);
-      return res.status(400).json({ error: 'Facebook user token not found. Please reconnect Facebook.' });
-    }
-
-    console.log('🔍 [listAdAccounts] Making Facebook API request to:', `${GRAPH_BASE}/me/adaccounts`);
-    const { data } = await axios.get(`${GRAPH_BASE}/me/adaccounts`, {
-      params: { fields: 'id,name,currency,account_status', access_token: tokenRecord.access_token },
-    });
+    // Return agency ad accounts with full act_ prefix
+    const AGENCY_AD_ACCOUNTS = [
+      {
+        id: 'act_2830100050563421',
+        name: 'Agency Account 1',
+        currency: 'EUR',
+        account_status: 1
+      },
+      {
+        id: process.env.AGENCY_AD_ACCOUNT_2 || 'act_YOUR_AD_ACCOUNT_2', 
+        name: 'Agency Account 2',
+        currency: 'EUR',
+        account_status: 1
+      }
+    ];
     
-    console.log('✅ [listAdAccounts] Facebook API response:', {
-      adAccountCount: data?.data?.length || 0,
-      hasData: !!data?.data
+    res.json({ 
+      data: AGENCY_AD_ACCOUNTS,
+      message: 'Using agency ad accounts for campaign creation'
     });
-    
-    res.json(data);
   } catch (err) {
-    console.error('❌ [listAdAccounts] Error occurred:', {
-      message: err.message,
-      status: err.response?.status,
-      statusText: err.response?.statusText,
-      responseData: err.response?.data,
-      stack: err.stack
-    });
+    console.error('❌ [listAdAccounts] Error occurred:', err.message);
     res.status(500).json({ error: 'Failed to list ad accounts' });
   }
 };
@@ -104,11 +86,30 @@ exports.recommendAdPlan = async (req, res) => {
     const { car, objective, country = 'DE', language = 'de' } = req.body;
     if (!car || !car.title) return res.status(400).json({ error: 'Missing car payload' });
 
-    const prompt = `You are an ads strategist for car dealerships. Given this car listing, propose: objective (Traffic/Leads/Messages), target audience (interests, age, gender, radius around location), placements (FB/IG feeds, reels), recommended duration (days), daily budget (in EUR), and ad creative: primary text, headline, description, CTA. Be concise JSON.
+    const prompt = `You are an ads strategist for car dealerships. Given this car listing, propose a complete Facebook ad plan as JSON with these fields:
+
+REQUIRED FIELDS:
+- objective: "TRAFFIC", "LEAD_GENERATION", or "MESSAGES"  
+- target_audience: {interests: [], age_min: 18, age_max: 65, genders: [1,2]}
+- placements: ["facebook_feeds", "instagram_feeds", "facebook_reels"]
+- duration_days: number (3-30)
+- daily_budget_cents: number (1000-10000 in cents EUR)
+- special_ad_categories: ['none'] (for general car sales)
+- primary_text: string (ad copy)
+- headline: string (short headline)
+- description: string (longer description)  
+- cta: "LEARN_MORE", "CONTACT_US", "CALL_NOW"
+- campaign_name: string
+- ad_name: string
+- adset_name: string
+- creative_name: string
+
 Car: ${JSON.stringify(car)}
-Preferred objective: ${objective || 'auto'}
+Preferred objective: ${objective || 'TRAFFIC'}
 Country: ${country}
-Language: ${language}`;
+Language: ${language}
+
+Return ONLY valid JSON with all required fields.`;
 
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
@@ -156,8 +157,17 @@ exports.createCampaign = async (req, res) => {
     const { ad_account_id, plan, creative, charge_amount_cents } = req.body;
     if (!ad_account_id || !plan || !creative) return res.status(400).json({ error: 'Missing ad_account_id, plan, or creative' });
 
-    // Ensure user has a default payment method with us (optional: take a service fee)
-    if (charge_amount_cents && charge_amount_cents > 0) {
+    // AGENCY MODEL: Collect full ad spend + service fee from client
+    const { total_budget_cents, service_fee_cents, campaign_duration_days = 7 } = req.body;
+    
+    if (!total_budget_cents || total_budget_cents <= 0) {
+      return res.status(400).json({ error: 'Total campaign budget is required' });
+    }
+
+    // Calculate total amount to charge client (ad spend + service fee)
+    const total_charge = total_budget_cents + (service_fee_cents || 0);
+
+    if (total_charge > 0) {
       // Lookup Stripe customer + payment method
       const { data: pmRow } = await supabase
         .from('user_payment_methods')
@@ -165,17 +175,43 @@ exports.createCampaign = async (req, res) => {
         .eq('user_id', user.id)
         .maybeSingle();
       if (!pmRow?.stripe_customer_id || !pmRow?.payment_method_id) {
-        return res.status(400).json({ error: 'No default payment method on file' });
+        return res.status(400).json({ error: 'No default payment method on file. Please add a payment method first.' });
       }
-      // Create a one-time charge
-      await stripe.paymentIntents.create({
-        amount: charge_amount_cents,
+
+      // Validate customer exists in current Stripe environment
+      try {
+        await stripe.customers.retrieve(pmRow.stripe_customer_id);
+      } catch (err) {
+        return res.status(400).json({ error: 'Payment method invalid. Please re-add your payment method.' });
+      }
+
+      // Charge client for full amount (ad spend + service fee)
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: total_charge,
         currency: 'eur',
         customer: pmRow.stripe_customer_id,
         payment_method: pmRow.payment_method_id,
         confirm: true,
         off_session: true,
-        description: 'Ad campaign setup/service fee',
+        description: `Ad Campaign: €${(total_budget_cents/100).toFixed(2)} ad spend + €${((service_fee_cents||0)/100).toFixed(2)} service fee`,
+        metadata: {
+          client_user_id: user.id,
+          ad_spend_cents: total_budget_cents,
+          service_fee_cents: service_fee_cents || 0,
+          campaign_duration_days
+        }
+      });
+
+      // Store campaign payment record for tracking
+      await supabase.from('campaign_payments').insert({
+        user_id: user.id,
+        payment_intent_id: paymentIntent.id,
+        total_amount_cents: total_charge,
+        ad_spend_cents: total_budget_cents,
+        service_fee_cents: service_fee_cents || 0,
+        campaign_duration_days,
+        status: 'paid',
+        created_at: new Date().toISOString()
       });
     }
 
@@ -186,7 +222,8 @@ exports.createCampaign = async (req, res) => {
     const access_token = tokenRecord.access_token;
 
     // 1) Create campaign
-    const campaignRes = await axios.post(`${GRAPH_BASE}/act_${ad_account_id}/campaigns`, null, {
+    // Use ad_account_id directly (should already include act_ prefix)
+    const campaignRes = await axios.post(`${GRAPH_BASE}/${ad_account_id}/campaigns`, null, {
       params: {
         name: creative?.campaign_name || `Car Campaign ${new Date().toISOString()}`,
         objective: plan.objective || 'LINK_CLICKS',
@@ -202,7 +239,11 @@ exports.createCampaign = async (req, res) => {
     const daily_budget = plan.daily_budget_cents || 1000; // in cents
     const targeting = plan.targeting || { geo_locations: { countries: [plan.country || 'DE'] } };
 
-    const adsetRes = await axios.post(`${GRAPH_BASE}/act_${ad_account_id}/adsets`, null, {
+    // Ensure special_ad_categories is properly formatted
+    const specialAdCategories = plan.special_ad_categories || [];
+    console.log('Special ad categories:', specialAdCategories);
+
+    const adsetRes = await axios.post(`${GRAPH_BASE}/${ad_account_id}/adsets`, null, {
       params: {
         name: creative?.adset_name || 'Car Ad Set',
         campaign_id,
@@ -213,22 +254,33 @@ exports.createCampaign = async (req, res) => {
         end_time,
         targeting: JSON.stringify(targeting),
         status: 'PAUSED',
+        special_ad_categories: JSON.stringify(specialAdCategories), // Required by Facebook
         access_token,
       },
     });
     const adset_id = adsetRes.data.id;
 
     // 3) Create creative (requires an image or video) - assume image url provided
-    const creativeRes = await axios.post(`${GRAPH_BASE}/act_${ad_account_id}/adcreatives`, null, {
+    if (!creative.page_id) {
+      return res.status(400).json({ error: 'Facebook Page ID is required for ad creative' });
+    }
+    if (!creative.image_url) {
+      return res.status(400).json({ error: 'Image URL is required for ad creative' });
+    }
+    if (!creative.url) {
+      return res.status(400).json({ error: 'Landing page URL is required for ad creative' });
+    }
+
+    const creativeRes = await axios.post(`${GRAPH_BASE}/${ad_account_id}/adcreatives`, null, {
       params: {
         name: creative?.name || 'Car Creative',
         object_story_spec: JSON.stringify({
           page_id: creative.page_id,
           link_data: {
-            message: creative.primary_text,
+            message: creative.primary_text || 'Check out this amazing car!',
             link: creative.url,
-            caption: creative.headline,
-            description: creative.description,
+            caption: creative.headline || 'Car for Sale',
+            description: creative.description || 'High-quality vehicle available now.',
             call_to_action: { type: creative.cta || 'LEARN_MORE', value: { link: creative.url } },
             picture: creative.image_url,
           },
@@ -239,7 +291,7 @@ exports.createCampaign = async (req, res) => {
     const creative_id = creativeRes.data.id;
 
     // 4) Create ad
-    const adRes = await axios.post(`${GRAPH_BASE}/act_${ad_account_id}/ads`, null, {
+    const adRes = await axios.post(`${GRAPH_BASE}/${ad_account_id}/ads`, null, {
       params: {
         name: creative?.ad_name || 'Car Ad',
         adset_id,
@@ -253,7 +305,20 @@ exports.createCampaign = async (req, res) => {
     res.json({ campaign_id, adset_id, creative_id, ad_id });
   } catch (err) {
     console.error('createCampaign error:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Failed to create campaign' });
+    let errorMessage = 'Failed to create campaign';
+    
+    if (err.response?.data?.error?.message) {
+      errorMessage = err.response.data.error.message;
+    } else if (err.response?.data?.error) {
+      errorMessage = err.response.data.error;
+    } else if (err.message) {
+      errorMessage = err.message;
+    }
+    
+    res.status(500).json({ 
+      error: errorMessage,
+      details: err.response?.data || null 
+    });
   }
 };
 

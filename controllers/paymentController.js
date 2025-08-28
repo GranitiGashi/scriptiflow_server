@@ -35,6 +35,18 @@ exports.savePaymentMethod = async (req, res) => {
 
         let customerId = profile?.stripe_customer_id;
 
+        // Validate existing customer or create new one
+        if (customerId) {
+            try {
+                // Check if customer exists in current Stripe environment
+                await stripe.customers.retrieve(customerId);
+            } catch (err) {
+                // Customer doesn't exist (likely due to test/live mode mismatch)
+                console.log(`Customer ${customerId} not found in current Stripe environment, creating new one`);
+                customerId = null;
+            }
+        }
+
         if (!customerId) {
             const customer = await stripe.customers.create({
                 email: user.email,
@@ -239,6 +251,122 @@ exports.deletePaymentMethod = async (req, res) => {
     }
 };
 
+// Charge a saved payment method
+exports.chargeSavedCard = async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Unauthorized: Missing token' });
+    }
+    const token = authHeader.split(' ')[1];
+
+    try {
+        const { data: { user }, error } = await supabase.auth.getUser(token);
+        if (error || !user) {
+            return res.status(401).json({ error: 'Invalid or expired token' });
+        }
+        const userId = user.id;
+
+        const { payment_method_id, amount, currency = 'eur', description = 'Payment' } = req.body;
+
+        if (!payment_method_id || !amount) {
+            return res.status(400).json({ error: 'Missing payment_method_id or amount' });
+        }
+
+        // Get customer ID and verify payment method belongs to this user
+        const { data: pmRow } = await supabase
+            .from('user_payment_methods')
+            .select('stripe_customer_id, payment_method_id')
+            .eq('user_id', userId)
+            .eq('payment_method_id', payment_method_id)
+            .maybeSingle();
+
+        if (!pmRow) {
+            return res.status(400).json({ error: 'Payment method not found or not owned by user' });
+        }
+
+        // Validate customer exists in current Stripe environment
+        let customerId = pmRow.stripe_customer_id;
+        try {
+            await stripe.customers.retrieve(customerId);
+        } catch (err) {
+            return res.status(400).json({ error: 'Customer not found in current Stripe environment. Please re-add your payment method.' });
+        }
+
+        // Create and confirm payment intent
+        const paymentIntent = await stripe.paymentIntents.create({
+            amount: Math.round(amount), // amount should be in cents
+            currency,
+            customer: customerId,
+            payment_method: payment_method_id,
+            confirm: true,
+            off_session: true, // Indicates this is for a saved card
+            description,
+        });
+
+        res.json({
+            success: true,
+            payment_intent: {
+                id: paymentIntent.id,
+                status: paymentIntent.status,
+                amount: paymentIntent.amount,
+                currency: paymentIntent.currency,
+            }
+        });
+
+    } catch (err) {
+        console.error('chargeSavedCard error:', err);
+        
+        // Handle specific Stripe errors
+        if (err.type === 'StripeCardError') {
+            res.status(400).json({ error: err.message });
+        } else if (err.code === 'authentication_required') {
+            res.status(400).json({ error: 'Authentication required. Please use a new card for this payment.' });
+        } else {
+            res.status(500).json({ error: 'Failed to process payment' });
+        }
+    }
+};
+
+// Create a payment intent for new card payments
+exports.createPaymentIntent = async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Unauthorized: Missing token' });
+    }
+    const token = authHeader.split(' ')[1];
+
+    try {
+        const { data: { user }, error } = await supabase.auth.getUser(token);
+        if (error || !user) {
+            return res.status(401).json({ error: 'Invalid or expired token' });
+        }
+
+        const { amount, currency = 'eur', description = 'Payment' } = req.body;
+
+        if (!amount || amount <= 0) {
+            return res.status(400).json({ error: 'Invalid amount' });
+        }
+
+        const paymentIntent = await stripe.paymentIntents.create({
+            amount: Math.round(amount), // amount should be in cents
+            currency,
+            description,
+            metadata: {
+                user_id: user.id,
+                user_email: user.email
+            }
+        });
+
+        res.json({
+            client_secret: paymentIntent.client_secret
+        });
+
+    } catch (err) {
+        console.error('createPaymentIntent error:', err);
+        res.status(500).json({ error: 'Failed to create payment intent' });
+    }
+};
+
 // Create a SetupIntent to collect and save a card on the client using Stripe Elements
 exports.createSetupIntent = async (req, res) => {
     const authHeader = req.headers.authorization;
@@ -266,6 +394,19 @@ exports.createSetupIntent = async (req, res) => {
         }
 
         let customerId = profile?.stripe_customer_id;
+        
+        // Validate existing customer or create new one
+        if (customerId) {
+            try {
+                // Check if customer exists in current Stripe environment
+                await stripe.customers.retrieve(customerId);
+            } catch (err) {
+                // Customer doesn't exist (likely due to test/live mode mismatch)
+                console.log(`Customer ${customerId} not found in current Stripe environment, creating new one`);
+                customerId = null;
+            }
+        }
+        
         if (!customerId) {
             const customer = await stripe.customers.create({
                 email: user.email,
