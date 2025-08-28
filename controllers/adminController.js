@@ -5,28 +5,45 @@ const supabaseAdmin = require("../config/supabaseAdmin");
 async function isAdmin(userId) {
   try {
     console.log("🔍 Checking admin status for user ID:", userId);
+    console.log("🔍 User ID type:", typeof userId);
     
+    // First, let's see ALL users in the table
+    const { data: allUsers, error: allError } = await supabaseAdmin
+      .from("users_app")
+      .select("id, role, email");
+      
+    console.log("🔍 ALL users in users_app table:", allUsers);
+    console.log("🔍 Total users in table:", allUsers?.length || 0);
+    
+    // Now try to find the specific user
     const { data, error } = await supabaseAdmin
       .from("users_app")
-      .select("role, email")
-      .eq("id", userId)
-      .single();
+      .select("role, email, id")
+      .eq("id", userId);  // Removed .single() to see what we get
 
-    console.log("🔍 Admin check result:", { data, error });
+    console.log("🔍 Query for specific user:", { data, error, userId });
 
-    if (error || !data) {
-      console.log("❌ Admin check failed:", error?.message || "No data found");
+    if (error) {
+      console.log("❌ Database error:", error);
+      return false;
+    }
+    
+    if (!data || data.length === 0) {
+      console.log("❌ No user found with ID:", userId);
+      console.log("🔍 Available user IDs:", allUsers?.map(u => u.id));
       return false;
     }
 
-    const isAdminRole = data.role === "admin";
-    const isAdminEmail = data.email?.includes("@admin.");
+    const userData = data[0]; // Get first result since we removed .single()
+    const isAdminRole = userData.role === "admin";
+    const isAdminEmail = userData.email?.includes("@admin.");
     const result = isAdminRole || isAdminEmail;
     
     console.log("🔍 Admin check details:", {
       userId,
-      email: data.email,
-      role: data.role,
+      foundUserId: userData.id,
+      email: userData.email,
+      role: userData.role,
       isAdminRole,
       isAdminEmail,
       finalResult: result
