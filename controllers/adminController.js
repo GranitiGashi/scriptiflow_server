@@ -319,21 +319,31 @@ const getUsers = async (req, res) => {
       refresh_token: refreshToken || null,
     });
 
-    // Fetch all clients (non-admin users)
-    const { data: users, error } = await supabase
+    // First, let's see all users to debug
+    const { data: allUsers, error: allError } = await supabase
       .from("users_app")
-      .select("id, email, full_name, role, created_at")
-      .neq("role", "admin")
-      .not("email", "like", "%@admin.%");
+      .select("id, email, full_name, role, created_at");
 
-    if (error) {
-      console.error("Error fetching clients:", error);
-      return res.status(500).json({ error: "Failed to fetch clients" });
+    if (allError) {
+      console.error("Error fetching all users:", allError);
+      return res.status(500).json({ error: "Failed to fetch users" });
     }
 
-    console.log("Fetched clients:", users);
+    console.log("All users in database:", allUsers);
+    console.log("Total users count:", allUsers?.length || 0);
 
-    res.json(users || []);
+    // Filter clients (non-admin users) - handle null/undefined roles
+    const clients = allUsers?.filter(user => {
+      const isNotAdmin = user.role !== "admin";
+      const isNotAdminEmail = !user.email?.includes("@admin.");
+      console.log(`User ${user.email}: role=${user.role}, isNotAdmin=${isNotAdmin}, isNotAdminEmail=${isNotAdminEmail}`);
+      return isNotAdmin && isNotAdminEmail;
+    }) || [];
+
+    console.log("Filtered clients:", clients);
+    console.log("Clients count:", clients.length);
+
+    res.json(clients || []);
   } catch (err) {
     console.error("getUsers error:", err);
     res.status(500).json({ error: err.message || "Internal server error" });
