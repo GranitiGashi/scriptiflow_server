@@ -321,7 +321,7 @@ const getUsers = async (req, res) => {
     const { data: clients, error } = await supabaseAdmin
       .from("users_app")
       .select("id, email, full_name, role, created_at")
-      .eq("role", "client");
+      .in("role", ["client", "user"]);
 
     if (error) {
       console.error("Error fetching clients:", error);
