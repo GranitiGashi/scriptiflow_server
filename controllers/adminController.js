@@ -1,75 +1,23 @@
 const supabase = require("../config/supabaseClient");
 const supabaseAdmin = require("../config/supabaseAdmin");
 
-// Check if user is admin
-async function isAdmin(userId, userEmail) {
+// Check if user is admin (same style as authController.register)
+async function isAdmin(userId) {
   try {
-    console.log("🔍 Checking admin status for user ID:", userId);
-    console.log("🔍 User ID type:", typeof userId);
-    
-    // First, let's see ALL users in the table
-    const { data: allUsers, error: allError } = await supabaseAdmin
-      .from("users_app")
-      .select("id, role, email");
-      
-    console.log("🔍 ALL users in users_app table:", allUsers);
-    console.log("🔍 Total users in table:", allUsers?.length || 0);
-    
-    // Now try to find the specific user
-    const { data, error } = await supabaseAdmin
-      .from("users_app")
-      .select("role, email, id")
-      .eq("id", userId);  // Removed .single() to see what we get
+    const { data: userData, error: userError } = await supabase
+      .from('users_app')
+      .select('role')
+      .eq('id', userId)
+      .single();
 
-    console.log("🔍 Query for specific user:", { data, error, userId });
-
-    if (error) {
-      console.log("❌ Database error:", error);
-      return false;
-    }
-    
-    if (!data || data.length === 0) {
-      console.log("❌ No user found with ID:", userId);
-      console.log("🔍 Available user IDs:", allUsers?.map(u => u.id));
-      // Fallback: allow admin via configured emails
-      const adminEmails = (process.env.ADMIN_EMAILS || "")
-        .split(",")
-        .map(e => e.trim().toLowerCase())
-        .filter(Boolean);
-      const emailLower = (userEmail || "").toLowerCase();
-      const isEnvAdmin = adminEmails.includes(emailLower);
-      if (isEnvAdmin) {
-        console.log("✅ Fallback admin match via ADMIN_EMAILS:", emailLower);
-        return true;
-      }
+    if (userError) {
+      console.error('Supabase User Fetch Error (isAdmin):', userError.message);
       return false;
     }
 
-    const userData = data[0]; // Get first result since we removed .single()
-    const isAdminRole = userData.role === "admin";
-    const isAdminEmail = userData.email?.includes("@admin.");
-    const adminEmails = (process.env.ADMIN_EMAILS || "")
-      .split(",")
-      .map(e => e.trim().toLowerCase())
-      .filter(Boolean);
-    const emailLower = (userEmail || userData.email || "").toLowerCase();
-    const isEnvAdmin = adminEmails.includes(emailLower);
-    const result = isAdminRole || isAdminEmail || isEnvAdmin;
-    
-    console.log("🔍 Admin check details:", {
-      userId,
-      foundUserId: userData.id,
-      email: userData.email,
-      role: userData.role,
-      isAdminRole,
-      isAdminEmail,
-      isEnvAdmin,
-      finalResult: result
-    });
-
-    return result;
+    return userData?.role === 'admin';
   } catch (err) {
-    console.error("❌ Admin check error:", err);
+    console.error('isAdmin error:', err);
     return false;
   }
 }
@@ -355,7 +303,7 @@ const getUsers = async (req, res) => {
 
     // Check if user is admin
     console.log("🔍 Checking if user is admin...");
-    const adminCheck = await isAdmin(user.id, user.email);
+    const adminCheck = await isAdmin(user.id);
     console.log("🔍 Admin check final result:", adminCheck);
     
     if (!adminCheck) {
@@ -369,28 +317,16 @@ const getUsers = async (req, res) => {
 
     // Using admin client - no need for RLS session setup
     
-    // First, let's see all users to debug
-    const { data: allUsers, error: allError } = await supabaseAdmin
+    // Fetch clients directly (server admin client bypasses RLS)
+    const { data: clients, error } = await supabaseAdmin
       .from("users_app")
-      .select("id, email, full_name, role, created_at");
+      .select("id, email, full_name, role, created_at")
+      .eq("role", "client");
 
-    if (allError) {
-      console.error("Error fetching all users:", allError);
-      return res.status(500).json({ error: "Failed to fetch users" });
+    if (error) {
+      console.error("Error fetching clients:", error);
+      return res.status(500).json({ error: "Failed to fetch clients" });
     }
-
-    console.log("All users in database:", allUsers);
-    console.log("Total users count:", allUsers?.length || 0);
-
-    // Filter for users with 'client' role specifically
-    const clients = allUsers?.filter(user => {
-      const isClient = user.role === "client";
-      console.log(`User ${user.email}: role=${user.role}, isClient=${isClient}`);
-      return isClient;
-    }) || [];
-
-    console.log("Filtered clients:", clients);
-    console.log("Clients count:", clients.length);
 
     res.json(clients || []);
   } catch (err) {
