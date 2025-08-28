@@ -288,7 +288,7 @@ const deleteUserApp = async (req, res) => {
   }
 };
 
-// Get all users for admin
+// Get all clients for admin (excludes admin users)
 const getUsers = async (req, res) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -319,17 +319,19 @@ const getUsers = async (req, res) => {
       refresh_token: refreshToken || null,
     });
 
-    // Fetch all users
+    // Fetch all clients (non-admin users)
     const { data: users, error } = await supabase
       .from("users_app")
-      .select("id, email, full_name, role, created_at");
+      .select("id, email, full_name, role, created_at")
+      .neq("role", "admin")
+      .not("email", "like", "%@admin.%");
 
     if (error) {
-      console.error("Error fetching users:", error);
-      return res.status(500).json({ error: "Failed to fetch users" });
+      console.error("Error fetching clients:", error);
+      return res.status(500).json({ error: "Failed to fetch clients" });
     }
 
-    console.log("Fetched users:", users);
+    console.log("Fetched clients:", users);
 
     res.json(users || []);
   } catch (err) {
