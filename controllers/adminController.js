@@ -2,7 +2,7 @@ const supabase = require("../config/supabaseClient");
 const supabaseAdmin = require("../config/supabaseAdmin");
 
 // Check if user is admin
-async function isAdmin(userId) {
+async function isAdmin(userId, userEmail) {
   try {
     console.log("🔍 Checking admin status for user ID:", userId);
     console.log("🔍 User ID type:", typeof userId);
@@ -31,13 +31,30 @@ async function isAdmin(userId) {
     if (!data || data.length === 0) {
       console.log("❌ No user found with ID:", userId);
       console.log("🔍 Available user IDs:", allUsers?.map(u => u.id));
+      // Fallback: allow admin via configured emails
+      const adminEmails = (process.env.ADMIN_EMAILS || "")
+        .split(",")
+        .map(e => e.trim().toLowerCase())
+        .filter(Boolean);
+      const emailLower = (userEmail || "").toLowerCase();
+      const isEnvAdmin = adminEmails.includes(emailLower);
+      if (isEnvAdmin) {
+        console.log("✅ Fallback admin match via ADMIN_EMAILS:", emailLower);
+        return true;
+      }
       return false;
     }
 
     const userData = data[0]; // Get first result since we removed .single()
     const isAdminRole = userData.role === "admin";
     const isAdminEmail = userData.email?.includes("@admin.");
-    const result = isAdminRole || isAdminEmail;
+    const adminEmails = (process.env.ADMIN_EMAILS || "")
+      .split(",")
+      .map(e => e.trim().toLowerCase())
+      .filter(Boolean);
+    const emailLower = (userEmail || userData.email || "").toLowerCase();
+    const isEnvAdmin = adminEmails.includes(emailLower);
+    const result = isAdminRole || isAdminEmail || isEnvAdmin;
     
     console.log("🔍 Admin check details:", {
       userId,
@@ -46,6 +63,7 @@ async function isAdmin(userId) {
       role: userData.role,
       isAdminRole,
       isAdminEmail,
+      isEnvAdmin,
       finalResult: result
     });
 
@@ -78,7 +96,7 @@ const getUserApps = async (req, res) => {
     }
 
     // Check if user is admin
-    if (!(await isAdmin(user.id))) {
+    if (!(await isAdmin(user.id, user.email))) {
       return res
         .status(403)
         .json({ error: "Forbidden: Admin access required" });
@@ -142,7 +160,7 @@ const createUserApp = async (req, res) => {
     }
 
     // Check if user is admin
-    if (!(await isAdmin(user.id))) {
+    if (!(await isAdmin(user.id, user.email))) {
       return res
         .status(403)
         .json({ error: "Forbidden: Admin access required" });
@@ -224,7 +242,7 @@ const updateUserApp = async (req, res) => {
     }
 
     // Check if user is admin
-    if (!(await isAdmin(user.id))) {
+    if (!(await isAdmin(user.id, user.email))) {
       return res
         .status(403)
         .json({ error: "Forbidden: Admin access required" });
@@ -337,7 +355,7 @@ const getUsers = async (req, res) => {
 
     // Check if user is admin
     console.log("🔍 Checking if user is admin...");
-    const adminCheck = await isAdmin(user.id);
+    const adminCheck = await isAdmin(user.id, user.email);
     console.log("🔍 Admin check final result:", adminCheck);
     
     if (!adminCheck) {
