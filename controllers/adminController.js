@@ -4,17 +4,37 @@ const supabaseAdmin = require("../config/supabaseAdmin");
 // Check if user is admin
 async function isAdmin(userId) {
   try {
+    console.log("🔍 Checking admin status for user ID:", userId);
+    
     const { data, error } = await supabaseAdmin
       .from("users_app")
       .select("role, email")
       .eq("id", userId)
       .single();
 
-    if (error || !data) return false;
+    console.log("🔍 Admin check result:", { data, error });
 
-    return data.role === "admin" || data.email?.includes("@admin.");
+    if (error || !data) {
+      console.log("❌ Admin check failed:", error?.message || "No data found");
+      return false;
+    }
+
+    const isAdminRole = data.role === "admin";
+    const isAdminEmail = data.email?.includes("@admin.");
+    const result = isAdminRole || isAdminEmail;
+    
+    console.log("🔍 Admin check details:", {
+      userId,
+      email: data.email,
+      role: data.role,
+      isAdminRole,
+      isAdminEmail,
+      finalResult: result
+    });
+
+    return result;
   } catch (err) {
-    console.error("Admin check error:", err);
+    console.error("❌ Admin check error:", err);
     return false;
   }
 }
@@ -287,16 +307,30 @@ const getUsers = async (req, res) => {
       data: { user },
       error: tokenError,
     } = await supabase.auth.getUser(token);
+    
+    console.log("🔍 Token validation result:", {
+      user: user ? { id: user.id, email: user.email } : null,
+      tokenError: tokenError?.message || null
+    });
+    
     if (tokenError || !user) {
+      console.log("❌ Token validation failed");
       return res.status(401).json({ error: "Unauthorized: Invalid token" });
     }
 
     // Check if user is admin
-    if (!(await isAdmin(user.id))) {
+    console.log("🔍 Checking if user is admin...");
+    const adminCheck = await isAdmin(user.id);
+    console.log("🔍 Admin check final result:", adminCheck);
+    
+    if (!adminCheck) {
+      console.log("❌ User is not admin - returning 403");
       return res
         .status(403)
         .json({ error: "Forbidden: Admin access required" });
     }
+    
+    console.log("✅ User is admin - proceeding with request");
 
     // Using admin client - no need for RLS session setup
     
