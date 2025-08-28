@@ -1,9 +1,10 @@
-const supabase = require("../config/supabaseAdmin");
+const supabase = require("../config/supabaseClient");
+const supabaseAdmin = require("../config/supabaseAdmin");
 
 // Check if user is admin
 async function isAdmin(userId) {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from("users_app")
       .select("role, email")
       .eq("id", userId)
@@ -49,7 +50,7 @@ const getUserApps = async (req, res) => {
     // Using admin client - no need for RLS session setup
 
     // Get user's apps
-    const { data: apps, error } = await supabase
+    const { data: apps, error } = await supabaseAdmin
       .from("user_apps")
       .select("*")
       .eq("user_id", userId)
@@ -113,7 +114,7 @@ const createUserApp = async (req, res) => {
     // Using admin client - no need for RLS session setup
 
     // Get current max position for this user
-    const { data: maxPos } = await supabase
+    const { data: maxPos } = await supabaseAdmin
       .from("user_apps")
       .select("position")
       .eq("user_id", userId)
@@ -138,7 +139,7 @@ const createUserApp = async (req, res) => {
       updated_at: new Date().toISOString(),
     };
 
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from("user_apps")
       .insert(appData)
       .select()
@@ -204,7 +205,7 @@ const updateUserApp = async (req, res) => {
       updated_at: new Date().toISOString(),
     };
 
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from("user_apps")
       .update(appData)
       .eq("id", appId)
@@ -254,7 +255,7 @@ const deleteUserApp = async (req, res) => {
 
     // Using admin client - no need for RLS session setup
 
-    const { error } = await supabase
+    const { error } = await supabaseAdmin
       .from("user_apps")
       .update({ is_active: false, updated_at: new Date().toISOString() })
       .eq("id", appId)
@@ -300,7 +301,7 @@ const getUsers = async (req, res) => {
     // Using admin client - no need for RLS session setup
     
     // First, let's see all users to debug
-    const { data: allUsers, error: allError } = await supabase
+    const { data: allUsers, error: allError } = await supabaseAdmin
       .from("users_app")
       .select("id, email, full_name, role, created_at");
 
