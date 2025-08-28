@@ -332,12 +332,11 @@ const getUsers = async (req, res) => {
     console.log("All users in database:", allUsers);
     console.log("Total users count:", allUsers?.length || 0);
 
-    // Filter clients (non-admin users) - handle null/undefined roles
+    // Filter for users with 'client' role specifically
     const clients = allUsers?.filter(user => {
-      const isNotAdmin = user.role !== "admin";
-      const isNotAdminEmail = !user.email?.includes("@admin.");
-      console.log(`User ${user.email}: role=${user.role}, isNotAdmin=${isNotAdmin}, isNotAdminEmail=${isNotAdminEmail}`);
-      return isNotAdmin && isNotAdminEmail;
+      const isClient = user.role === "client";
+      console.log(`User ${user.email}: role=${user.role}, isClient=${isClient}`);
+      return isClient;
     }) || [];
 
     console.log("Filtered clients:", clients);
