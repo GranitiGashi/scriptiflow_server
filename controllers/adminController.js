@@ -317,11 +317,13 @@ const getUsers = async (req, res) => {
 
     // Using admin client - no need for RLS session setup
     
-    // Fetch clients directly (server admin client bypasses RLS)
+    // Fetch non-admin users (clients) robustly (treat null role as client)
     const { data: clients, error } = await supabaseAdmin
       .from("users_app")
       .select("id, email, full_name, role, created_at")
-      .in("role", ["client", "user"]);
+      .or('role.is.null,role.eq.client,role.eq.user')
+      .eq('is_active', true)
+      .order('created_at', { ascending: false });
 
     if (error) {
       console.error("Error fetching clients:", error);
