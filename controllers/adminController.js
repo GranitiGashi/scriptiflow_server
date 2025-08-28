@@ -1,4 +1,4 @@
-const supabase = require("../config/supabaseClient");
+const supabase = require("../config/supabaseAdmin");
 
 // Check if user is admin
 async function isAdmin(userId) {
@@ -46,11 +46,7 @@ const getUserApps = async (req, res) => {
         .json({ error: "Forbidden: Admin access required" });
     }
 
-    // Set session for RLS
-    await supabase.auth.setSession({
-      access_token: token,
-      refresh_token: refreshToken || null,
-    });
+    // Using admin client - no need for RLS session setup
 
     // Get user's apps
     const { data: apps, error } = await supabase
@@ -114,11 +110,7 @@ const createUserApp = async (req, res) => {
         .json({ error: "Forbidden: Admin access required" });
     }
 
-    // Set session for RLS
-    await supabase.auth.setSession({
-      access_token: token,
-      refresh_token: refreshToken || null,
-    });
+    // Using admin client - no need for RLS session setup
 
     // Get current max position for this user
     const { data: maxPos } = await supabase
@@ -200,11 +192,7 @@ const updateUserApp = async (req, res) => {
         .json({ error: "Forbidden: Admin access required" });
     }
 
-    // Set session for RLS
-    await supabase.auth.setSession({
-      access_token: token,
-      refresh_token: refreshToken || null,
-    });
+    // Using admin client - no need for RLS session setup
 
     const appData = {
       name,
@@ -264,11 +252,7 @@ const deleteUserApp = async (req, res) => {
         .json({ error: "Forbidden: Admin access required" });
     }
 
-    // Set session for RLS
-    await supabase.auth.setSession({
-      access_token: token,
-      refresh_token: refreshToken || null,
-    });
+    // Using admin client - no need for RLS session setup
 
     const { error } = await supabase
       .from("user_apps")
@@ -313,12 +297,8 @@ const getUsers = async (req, res) => {
         .json({ error: "Forbidden: Admin access required" });
     }
 
-    // Set session for RLS
-    await supabase.auth.setSession({
-      access_token: token,
-      refresh_token: refreshToken || null,
-    });
-
+    // Using admin client - no need for RLS session setup
+    
     // First, let's see all users to debug
     const { data: allUsers, error: allError } = await supabase
       .from("users_app")
