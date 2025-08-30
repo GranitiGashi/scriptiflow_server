@@ -11,8 +11,18 @@ const adminRoutes = require('./routes/adminRoutes');
 
 
 const app = express();
+// Disable ETag to avoid 304 on dynamic API responses
+app.set('etag', false);
 app.use(cors());
 app.use(express.json());
+// Ensure API responses are not cached by intermediaries/browsers
+app.use((req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  res.set('Vary', 'Authorization');
+  next();
+});
 
 // Add request logging middleware
 app.use((req, res, next) => {
