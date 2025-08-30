@@ -6,7 +6,7 @@ const socialRoutes = require('./routes/socialRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const mobileDeRoutes = require('./routes/mobiledeRoutes');
 const adsRoutes = require('./routes/adsRoutes');
-const userAppsRoutes = require('./routes/userAppsRoutes');
+const appsRoutes = require('./routes/appsRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 
 
@@ -33,8 +33,8 @@ app.use('/api', socialRoutes);
 app.use('/api', paymentRoutes);
 app.use('/api', mobileDeRoutes);
 app.use('/api', adsRoutes);
-app.use('/api/user', userAppsRoutes);
-app.use('/api/admin', adminRoutes);
+app.use('/api', appsRoutes);
+app.use('/api', adminRoutes);
 
 const PORT = process.env.PORT || 8081;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
