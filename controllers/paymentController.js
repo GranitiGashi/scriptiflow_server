@@ -147,6 +147,34 @@ exports.getPaymentMethod = async (req, res) => {
     }
 };
 
+// Simple status endpoint to check whether Stripe is connected for the current user
+exports.getStripeStatus = async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Unauthorized: Missing token' });
+    }
+    const token = authHeader.split(' ')[1];
+
+    try {
+        const { data: { user }, error } = await supabase.auth.getUser(token);
+        if (error || !user) {
+            return res.status(401).json({ error: 'Invalid or expired token' });
+        }
+
+        const { data, error: pmError } = await supabase
+            .from('user_payment_methods')
+            .select('payment_method_id')
+            .eq('user_id', user.id)
+            .maybeSingle();
+
+        const connected = !!data?.payment_method_id;
+        return res.json({ connected });
+    } catch (err) {
+        console.error('getStripeStatus error:', err);
+        res.status(500).json({ error: 'Failed to fetch Stripe status' });
+    }
+};
+
 exports.updatePaymentMethod = async (req, res) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
