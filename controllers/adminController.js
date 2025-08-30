@@ -21,13 +21,41 @@ exports.listUsers = async (req, res) => {
 
     const { data, error } = await supabaseAdmin
       .from('users_app')
-      .select('id, email, full_name, company_name, role')
-      .order('created_at', { ascending: false });
+      .select('id, email, full_name, company_name, role');
 
     if (error) {
-      return res.status(500).json({ error: 'Failed to fetch users', details: error.message });
+      // If metadata table query fails, fallback to listing auth users
+      const { data: authList, error: authErr } = await supabaseAdmin.auth.admin.listUsers();
+      if (authErr) {
+        return res.status(500).json({ error: 'Failed to fetch users', details: authErr.message });
+      }
+      const users = (authList?.users || []).map(u => ({
+        id: u.id,
+        email: u.email,
+        full_name: u.user_metadata?.full_name || null,
+        company_name: u.user_metadata?.company_name || null,
+        role: 'client',
+      }));
+      return res.json(users);
     }
-    return res.json(data || []);
+
+    if (!data || data.length === 0) {
+      // Fallback to auth users if metadata table is empty
+      const { data: authList, error: authErr } = await supabaseAdmin.auth.admin.listUsers();
+      if (authErr) {
+        return res.status(200).json([]); // return empty gracefully
+      }
+      const users = (authList?.users || []).map(u => ({
+        id: u.id,
+        email: u.email,
+        full_name: u.user_metadata?.full_name || null,
+        company_name: u.user_metadata?.company_name || null,
+        role: 'client',
+      }));
+      return res.json(users);
+    }
+
+    return res.json(data);
   } catch (err) {
     const status = err.status || 500;
     return res.status(status).json({ error: err.message || 'Server error' });
