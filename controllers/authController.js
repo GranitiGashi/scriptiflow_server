@@ -1,6 +1,8 @@
 // controllers/authController.js
 const { getUserByEmail } = require('../models/userModel');
 const supabase = require('../config/supabaseClient');
+const supabaseAdmin = require('../config/supabaseAdmin');
+const { sendEmail } = require('../utils/email');
 
 async function register(req, res) {
   const authHeader = req.headers.authorization;
@@ -153,4 +155,116 @@ async function refresh(req, res) {
   }
 }
 
-module.exports = { login, register, refresh };
+// Admin invites a user: sends a brandable invite link so the user sets their own password
+async function inviteUser(req, res) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized: Missing token' });
+  }
+  const token = authHeader.split(' ')[1];
+
+  try {
+    // Verify caller
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (error || !user) return res.status(401).json({ error: 'Unauthorized: Invalid token' });
+    const { data: me, error: meErr } = await supabase
+      .from('users_app')
+      .select('role')
+      .eq('id', user.id)
+      .single();
+    if (meErr) return res.status(500).json({ error: 'Failed to verify user role' });
+    if (me.role !== 'admin') return res.status(403).json({ error: 'Forbidden: Admins only' });
+
+    const { email, full_name, company_name, role = 'client', permissions = {} } = req.body || {};
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+
+    const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+    // Generate an invite link (we will email with our own template)
+    const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+      type: 'invite',
+      email,
+      options: { redirectTo: `${FRONTEND_URL}/auth/new-password` },
+    });
+    if (linkError) return res.status(400).json({ error: linkError.message });
+
+    const invitedUserId = linkData?.user?.id;
+    if (invitedUserId) {
+      await supabase
+        .from('users_app')
+        .upsert({ id: invitedUserId, email, full_name, company_name, role, permissions });
+    }
+
+    // Send branded email with action_link
+    try {
+      const actionLink = linkData?.properties?.action_link;
+      await sendEmail({
+        to: email,
+        subject: 'You are invited to Scriptiflow',
+        text: `Welcome to Scriptiflow! Set your password using this link: ${actionLink}`,
+        html: `<p>Welcome to Scriptiflow!</p><p>Please click the button below to set your password and complete your account setup.</p><p><a href="${actionLink}" style="display:inline-block;background:#3b82f6;color:#fff;padding:10px 14px;border-radius:6px;text-decoration:none;">Set your password</a></p>`
+      });
+    } catch (e) {
+      console.log('Invite email skipped/failed:', e?.message || e);
+    }
+
+    return res.status(200).json({ status: 'invited', user_id: invitedUserId });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Internal server error' });
+  }
+}
+
+// Forgot password: generate a recovery link and email to user
+async function forgotPassword(req, res) {
+  const { email } = req.body || {};
+  if (!email) return res.status(400).json({ error: 'Email is required' });
+
+  try {
+    const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const { data, error } = await supabaseAdmin.auth.admin.generateLink({
+      type: 'recovery',
+      email,
+      options: { redirectTo: `${FRONTEND_URL}/auth/new-password` },
+    });
+    if (error) return res.status(400).json({ error: error.message });
+
+    try {
+      const actionLink = data?.properties?.action_link;
+      await sendEmail({
+        to: email,
+        subject: 'Reset your password',
+        text: `Reset your password using this link: ${actionLink}`,
+        html: `<p>We received a request to reset your password.</p><p><a href="${actionLink}" style="display:inline-block;background:#3b82f6;color:#fff;padding:10px 14px;border-radius:6px;text-decoration:none;">Reset Password</a></p>`
+      });
+    } catch (e) {
+      console.log('Recovery email skipped/failed:', e?.message || e);
+    }
+    return res.json({ status: 'sent' });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Internal server error' });
+  }
+}
+
+// Set a new password using a valid Supabase session (tokens from email link)
+async function setPassword(req, res) {
+  const authHeader = req.headers.authorization;
+  const refreshToken = req.headers['x-refresh-token'];
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized: Missing token' });
+  }
+  const token = authHeader.split(' ')[1];
+  const { password } = req.body || {};
+  if (!password || password.length < 8) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  }
+  try {
+    const { error: sessionError } = await supabase.auth.setSession({ access_token: token, refresh_token: refreshToken || null });
+    if (sessionError) return res.status(401).json({ error: 'Invalid or expired session' });
+    const { error: updError } = await supabase.auth.updateUser({ password });
+    if (updError) return res.status(400).json({ error: updError.message });
+    return res.json({ status: 'password_set' });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Internal server error' });
+  }
+}
+
+module.exports = { login, register, refresh, inviteUser, forgotPassword, setPassword };
