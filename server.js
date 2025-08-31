@@ -8,6 +8,7 @@ const mobileDeRoutes = require('./routes/mobiledeRoutes');
 const adsRoutes = require('./routes/adsRoutes');
 const appsRoutes = require('./routes/appsRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const supportRoutes = require('./routes/supportRoutes');
 
 
 const app = express();
@@ -45,6 +46,7 @@ app.use('/api', mobileDeRoutes);
 app.use('/api', adsRoutes);
 app.use('/api', appsRoutes);
 app.use('/api', adminRoutes);
+app.use('/api', supportRoutes);
 
 const PORT = process.env.PORT || 8081;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
