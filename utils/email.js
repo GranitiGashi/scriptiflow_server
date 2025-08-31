@@ -1,8 +1,15 @@
-const nodemailer = require('nodemailer');
+let nodemailer = null;
+try {
+  // Attempt to load nodemailer; if not installed, fall back to no-op mailer
+  // This prevents MODULE_NOT_FOUND during deploy when SMTP isn't configured yet
+  nodemailer = require('nodemailer');
+} catch (_) {
+  nodemailer = null;
+}
 
 function getTransport() {
   const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
-  if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
+  if (!nodemailer || !SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
     return null;
   }
   return nodemailer.createTransport({
