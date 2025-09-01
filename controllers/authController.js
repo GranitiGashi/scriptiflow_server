@@ -40,7 +40,8 @@ async function register(req, res) {
     const { email, password, full_name, company_name, role = 'user', permissions = {} } = req.body;
 
     // Create user in Supabase Auth
-    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+    // Use service role for administrative create
+    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email,
       password,
       email_confirm: true,
@@ -54,7 +55,10 @@ async function register(req, res) {
     const userId = authData.user.id;
 
     // Insert user into users_app table
-    const { error: insertError } = await supabase
+    // Ensure admins always have full permissions marker
+    const permissionsToStore = role === 'admin' ? { tier: '*' } : permissions;
+
+    const { error: insertError } = await supabaseAdmin
       .from('users_app')
       .insert([
         {
@@ -63,7 +67,7 @@ async function register(req, res) {
           full_name,
           company_name,
           role,
-          permissions,
+          permissions: permissionsToStore,
         },
       ]);
 
@@ -197,6 +201,7 @@ async function inviteUser(req, res) {
     // Send branded email with action_link
     try {
       const actionLink = linkData?.properties?.action_link;
+      console.log('actionLink', actionLink);
       await sendEmail({
         to: email,
         subject: 'You are invited to Scriptiflow',
@@ -229,6 +234,7 @@ async function forgotPassword(req, res) {
 
     try {
       const actionLink = data?.properties?.action_link;
+      console.log('actionLink', actionLink);
       await sendEmail({
         to: email,
         subject: 'Reset your password',
