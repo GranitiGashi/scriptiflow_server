@@ -16,4 +16,7 @@ create policy "Users can view their ticket messages" on public.support_messages
     )
   );
 
+-- Enable realtime for messages
+-- comment on table public.support_messages is 'realtime';
+
 

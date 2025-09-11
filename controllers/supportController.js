@@ -47,6 +47,20 @@ exports.createTicket = async (req, res) => {
     } catch (e) {
       console.log('Email send skipped/failed:', e?.message || e);
     }
+    // Notify admins by email (optional: use a configured admin email)
+    try {
+      const adminEmail = process.env.ADMIN_NOTIFICATIONS_EMAIL;
+      if (adminEmail) {
+        await sendEmail({
+          to: adminEmail,
+          subject: `New support ticket: ${subject}`,
+          text: `A new ticket was created by ${user.email}.\n\n${message}`,
+          html: `<p>A new ticket was created by ${user.email}.</p><p>${message.replace(/\n/g, '<br/>')}</p>`
+        });
+      }
+    } catch (e) {
+      console.log('Admin notify skipped/failed:', e?.message || e);
+    }
     return res.status(201).json(data);
   } catch (err) {
     return res.status(err.status || 500).json({ error: err.message || 'Server error' });
@@ -142,6 +156,22 @@ exports.addMessage = async (req, res) => {
       }
     } catch (e) {
       console.log('Email send skipped/failed:', e?.message || e);
+    }
+
+    // Notify admins on any new message from users
+    try {
+      const adminEmail = process.env.ADMIN_NOTIFICATIONS_EMAIL;
+      const isFromAdmin = isAdmin;
+      if (!isFromAdmin && adminEmail) {
+        await sendEmail({
+          to: adminEmail,
+          subject: `New message on ticket ${ticket.id}: ${ticket.subject}`,
+          text: `Message from ${user.email}:\n\n${message}`,
+          html: `<p>Message from ${user.email}:</p><p>${message.replace(/\n/g, '<br/>')}</p>`
+        });
+      }
+    } catch (e) {
+      console.log('Admin notify skipped/failed:', e?.message || e);
     }
 
     return res.status(201).json(data);

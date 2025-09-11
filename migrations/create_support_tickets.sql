@@ -16,4 +16,9 @@ drop policy if exists "Users can manage their own tickets" on public.support_tic
 create policy "Users can manage their own tickets" on public.support_tickets
   for all using (user_id = auth.uid());
 
+-- Enable realtime for this table (if not already enabled at project level)
+-- This is a no-op if realtime is already configured
+-- NOTE: Requires supabase_realtime extension set up
+-- comment on table public.support_tickets is 'realtime';
+
 
