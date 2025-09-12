@@ -6,42 +6,12 @@ const { getFacebookUserToken } = require('../models/socialTokenModel');
 
 const GRAPH_BASE = 'https://graph.facebook.com/v19.0';
 
+const { getUserFromRequest } = require('../utils/authUser');
+
 async function getSupabaseUser(req) {
-  console.log('🔍 [getSupabaseUser] Starting authentication check...');
-  
-  const auth = req.headers.authorization;
-  console.log('🔍 [getSupabaseUser] Auth header present:', !!auth);
-  
-  if (!auth || !auth.startsWith('Bearer ')) {
-    console.log('❌ [getSupabaseUser] Missing or invalid authorization header');
-    return { error: { status: 401, message: 'Unauthorized: Missing token' } };
-  }
-  
-  const token = auth.split(' ')[1];
-  console.log('🔍 [getSupabaseUser] Token extracted, length:', token?.length || 0);
-  
-  const { data: { user }, error } = await supabase.auth.getUser(token);
-  console.log('🔍 [getSupabaseUser] Supabase getUser result:', {
-    user: user ? { id: user.id, email: user.email } : null,
-    error: error?.message || null
-  });
-  
-  if (error || !user) {
-    console.log('❌ [getSupabaseUser] Failed to get user from Supabase:', error?.message);
-    return { error: { status: 401, message: 'Unauthorized: Invalid token' } };
-  }
-  
-  // Ensure RLS policies see this user for subsequent queries
-  try {
-    const refreshToken = req.headers['x-refresh-token'] || null;
-    console.log('🔍 [getSupabaseUser] Setting session with refresh token present:', !!refreshToken);
-    await supabase.auth.setSession({ access_token: token, refresh_token: refreshToken });
-  } catch (sessionError) {
-    console.log('⚠️ [getSupabaseUser] Session setup failed (proceeding anyway):', sessionError.message);
-  }
-  
-  console.log('✅ [getSupabaseUser] Authentication successful for user:', user.id);
-  return { user, accessToken: token };
+  const { user, accessToken, error } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+  if (error) return { error };
+  return { user, accessToken };
 }
 
 // DEPRECATED: In agency model, we use agency ad accounts instead of client ad accounts

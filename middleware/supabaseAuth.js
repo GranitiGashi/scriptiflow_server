@@ -3,18 +3,9 @@ const supabaseAdmin = require('../config/supabaseAdmin');
 
 async function requireSupabaseAuth(req, res, next) {
   try {
-    const authHeader = req.headers.authorization || '';
-    const token = authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
-
-    if (!token) {
-      return res.status(401).json({ error: 'Unauthorized: Missing token' });
-    }
-
-    const { data: { user }, error } = await supabase.auth.getUser(token);
-    if (error || !user) {
-      return res.status(401).json({ error: 'Unauthorized: Invalid token' });
-    }
-
+    const { getUserFromRequest } = require('../utils/authUser');
+    const { user, error } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (error) return res.status(error.status || 401).json({ error: error.message });
     req.authUser = user;
     next();
   } catch (err) {

@@ -1,19 +1,13 @@
 const supabase = require('../config/supabaseClient');
 const supabaseAdmin = require('../config/supabaseAdmin');
+const { getUserFromRequest } = require('../utils/authUser');
 const { sendEmail } = require('../utils/email');
 
 async function getCurrentUser(req) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    const err = new Error('Unauthorized: Missing token');
-    err.status = 401;
-    throw err;
-  }
-  const token = authHeader.split(' ')[1];
-  const { data: { user }, error } = await supabase.auth.getUser(token);
-  if (error || !user) {
-    const err = new Error('Invalid or expired token');
-    err.status = 401;
+  const { user, error } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+  if (error) {
+    const err = new Error(error.message);
+    err.status = error.status || 401;
     throw err;
   }
   return user;

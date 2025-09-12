@@ -20,20 +20,12 @@ const AGENCY_AD_ACCOUNTS = [
   }
 ];
 
+const { getUserFromRequest } = require('../utils/authUser');
+
 async function getSupabaseUser(req) {
-  const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith('Bearer ')) {
-    return { error: { status: 401, message: 'Unauthorized: Missing token' } };
-  }
-  
-  const token = auth.split(' ')[1];
-  const { data: { user }, error } = await supabase.auth.getUser(token);
-  
-  if (error || !user) {
-    return { error: { status: 401, message: 'Unauthorized: Invalid token' } };
-  }
-  
-  return { user, accessToken: token };
+  const { user, accessToken, error } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+  if (error) return { error };
+  return { user, accessToken };
 }
 
 // Return agency ad accounts instead of client ad accounts

@@ -1,5 +1,6 @@
 // controllers/mobiledeController.js
 const supabase = require('../config/supabaseClient');
+const { getUserFromRequest } = require('../utils/authUser');
 const { encrypt, decrypt } = require('../utils/crypto');
 
 // controllers/mobiledeController.js
@@ -13,10 +14,9 @@ exports.connectMobile = async (req, res) => {
   }
 
   try {
-    const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
-      access_token: accessToken,
-      refresh_token: refreshToken,
-    });
+    const { user, accessToken: newAccessToken, refreshToken: newRefresh, error } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (error) return res.status(error.status || 401).json({ error: error.message });
+    const sessionData = { user };
 
     if (sessionError) {
       console.error('Session error:', sessionError.message);
@@ -57,10 +57,9 @@ exports.getMobileCredentials = async (req, res) => {
   const refreshToken = req.headers['x-refresh-token'];
 
   try {
-    const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
-      access_token: accessToken,
-      refresh_token: refreshToken,
-    });
+    const { user, error } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (error) return res.status(error.status || 401).json({ error: error.message });
+    const sessionData = { user };
 
     if (sessionError) {
       console.error('Session error:', sessionError.message);
@@ -110,10 +109,9 @@ exports.editMobileCredentials = async (req, res) => {
   }
 
   try {
-    const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
-      access_token: accessToken,
-      refresh_token: refreshToken,
-    });
+    const { user, error } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (error) return res.status(error.status || 401).json({ error: error.message });
+    const sessionData = { user };
 
     if (sessionError) {
       console.error('Session error:', sessionError.message);
@@ -150,10 +148,9 @@ exports.deleteMobileCredentials = async (req, res) => {
   const refreshToken = req.headers['x-refresh-token'];
 
   try {
-    const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
-      access_token: accessToken,
-      refresh_token: refreshToken,
-    });
+    const { user, error } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (error) return res.status(error.status || 401).json({ error: error.message });
+    const sessionData = { user };
 
     if (sessionError) {
       console.error('Session error:', sessionError.message);
@@ -188,14 +185,9 @@ exports.getUserCars = async (req, res) => {
   const accessToken = req.headers.authorization?.split('Bearer ')[1];
   const refreshToken = req.headers['x-refresh-token'];
 
-  const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
-    access_token: accessToken,
-    refresh_token: refreshToken,
-  });
-
-  if (sessionError || !sessionData.user) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  const { user, error } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+  if (error) return res.status(error.status || 401).json({ error: error.message });
+  const sessionData = { user };
 
   const userId = sessionData.user.id;
 

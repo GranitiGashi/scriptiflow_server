@@ -14,7 +14,8 @@ exports.savePaymentMethod = async (req, res) => {
             return res.status(401).json({ error: 'Missing token' });
         }
 
-        const { data: { user }, error } = await supabase.auth.getUser(token);
+        const { getUserFromRequest } = require('../utils/authUser');
+        const { user, error } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
 
         if (error || !user) {
             return res.status(401).json({ error: 'Invalid or expired token' });
@@ -115,7 +116,7 @@ exports.getPaymentMethod = async (req, res) => {
     const token = authHeader.split(' ')[1];
 
     try {
-        const { data: { user }, error } = await supabase.auth.getUser(token);
+        const { user, error } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
         if (error || !user) {
             return res.status(401).json({ error: 'Invalid or expired token' });
         }
@@ -156,7 +157,7 @@ exports.getStripeStatus = async (req, res) => {
     const token = authHeader.split(' ')[1];
 
     try {
-        const { data: { user }, error } = await supabase.auth.getUser(token);
+        const { user, error } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
         if (error || !user) {
             return res.status(401).json({ error: 'Invalid or expired token' });
         }
@@ -184,7 +185,7 @@ exports.updatePaymentMethod = async (req, res) => {
     const { payment_method_id } = req.body;
 
     try {
-        const { data: { user }, error } = await supabase.auth.getUser(token);
+        const { user, error } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
         if (error || !user) {
             return res.status(401).json({ error: 'Invalid or expired token' });
         }
@@ -249,7 +250,7 @@ exports.deletePaymentMethod = async (req, res) => {
     const token = authHeader.split(' ')[1];
 
     try {
-        const { data: { user }, error } = await supabase.auth.getUser(token);
+        const { user, error } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
         if (error || !user) {
             return res.status(401).json({ error: 'Invalid or expired token' });
         }

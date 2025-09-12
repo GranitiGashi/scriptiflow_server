@@ -2,6 +2,7 @@ const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
 const querystring = require('querystring');
 const supabase = require('../config/supabaseClient');
+const { getUserFromRequest } = require('../utils/authUser');
 const { upsertSocialRecord, getSocialAccountsByUserId, getUserByEmail } = require('../models/socialModel');
 const { upsertFacebookUserToken } = require('../models/socialTokenModel');
 require('dotenv').config();
@@ -21,7 +22,7 @@ exports.getFbLoginUrl = async (req, res) => {
   const token = authHeader.split(' ')[1];
 
   try {
-    const { data: { user }, error: tokenError } = await supabase.auth.getUser(token);
+    const { user, error: tokenError } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
     if (tokenError || !user) {
       console.error('Invalid token for getFbLoginUrl:', tokenError?.message || 'No user found');
       return res.status(401).json({ error: 'Unauthorized: Invalid token' });
@@ -238,7 +239,7 @@ exports.getSocialAccounts = async (req, res) => {
 
   try {
     // Verify Supabase JWT
-    const { data: { user }, error: tokenError } = await supabase.auth.getUser(token);
+    const { user, error: tokenError } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
     if (tokenError || !user) {
       console.error('Token verification error:', tokenError?.message || 'No user found');
       return res.status(401).json({ error: 'Unauthorized: Invalid token' });
@@ -300,7 +301,7 @@ exports.getSocialAccountsByEmail = async (req, res) => {
   const token = authHeader.split(' ')[1];
 
   try {
-    const { data: { user }, error: tokenError } = await supabase.auth.getUser(token);
+    const { user, error: tokenError } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
     if (tokenError || !user) {
       console.error('Invalid token for getSocialAccountsByEmail:', tokenError?.message || 'No user found');
       return res.status(401).json({ error: 'Unauthorized: Invalid token' });
@@ -333,7 +334,6 @@ exports.getSocialAccountsByEmail = async (req, res) => {
       instagram_id: igAccount?.account_id || null,
       instagram_username: igAccount?.metadata?.username || null,
       instagram_profile_picture: igAccount?.metadata?.profile_picture_url || null,
-      access_token_fb: fbAccount?.access_token || null,
     });
   } catch (err) {
     console.error('getSocialAccountsByEmail error:', err.message);

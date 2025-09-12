@@ -1,24 +1,16 @@
 // controllers/appsController.js
 const supabase = require('../config/supabaseClient');
 const supabaseAdmin = require('../config/supabaseAdmin');
+const { getUserFromRequest } = require('../utils/authUser');
 
 async function getSessionUser(req) {
-  const accessToken = req.headers.authorization?.split('Bearer ')[1];
-  const refreshToken = req.headers['x-refresh-token'];
-
-  const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
-    access_token: accessToken,
-    refresh_token: refreshToken,
-  });
-
-  if (sessionError || !sessionData?.user) {
-    const message = sessionError?.message || 'Unauthorized';
-    const err = new Error(message);
-    err.status = 401;
+  const { user, error } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+  if (error) {
+    const err = new Error(error.message);
+    err.status = error.status || 401;
     throw err;
   }
-
-  return sessionData.user;
+  return user;
 }
 
 exports.getUserApps = async (req, res) => {
