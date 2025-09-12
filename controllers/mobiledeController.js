@@ -14,14 +14,10 @@ exports.connectMobile = async (req, res) => {
   }
 
   try {
-    const { user, accessToken: newAccessToken, refreshToken: newRefresh, error } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
-    if (error) return res.status(error.status || 401).json({ error: error.message });
+    const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
+    const user = authRes.user;
     const sessionData = { user };
-
-    if (sessionError) {
-      console.error('Session error:', sessionError.message);
-      return res.status(401).json({ error: 'Unauthorized: Failed to set session', details: sessionError.message });
-    }
 
     if (!sessionData.user) {
       console.error('No user in session');
@@ -33,16 +29,16 @@ exports.connectMobile = async (req, res) => {
 
     console.log('Upserting credentials:', { user_id: userId, username, encrypted_password: `${iv}:${encryptedData}` });
 
-    const { error } = await supabase
+    const upsertRes = await supabase
       .from('mobile_de_credentials')
       .upsert(
         { user_id: userId, username, encrypted_password: `${iv}:${encryptedData}` },
-        { onConflict: ['user_id'] } // Ensure array syntax for onConflict
+        { onConflict: ['user_id'] }
       );
 
-    if (error) {
-      console.error('Supabase upsert error:', error.message);
-      return res.status(500).json({ error: 'Failed to save credentials', details: error.message });
+    if (upsertRes.error) {
+      console.error('Supabase upsert error:', upsertRes.error.message);
+      return res.status(500).json({ error: 'Failed to save credentials', details: upsertRes.error.message });
     }
 
     res.json({ message: 'mobile.de credentials saved successfully' });
@@ -57,14 +53,10 @@ exports.getMobileCredentials = async (req, res) => {
   const refreshToken = req.headers['x-refresh-token'];
 
   try {
-    const { user, error } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
-    if (error) return res.status(error.status || 401).json({ error: error.message });
+    const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
+    const user = authRes.user;
     const sessionData = { user };
-
-    if (sessionError) {
-      console.error('Session error:', sessionError.message);
-      return res.status(401).json({ error: 'Unauthorized: Failed to set session', details: sessionError.message });
-    }
 
     if (!sessionData.user) {
       console.error('No user in session');
@@ -73,17 +65,18 @@ exports.getMobileCredentials = async (req, res) => {
 
     const userId = sessionData.user.id;
 
-    const { data, error } = await supabase
+    const selectRes = await supabase
       .from('mobile_de_credentials')
       .select('username, encrypted_password')
       .eq('user_id', userId)
       .single();
 
-    if (error) {
-      console.error('Supabase select error:', error.message);
-      return res.status(500).json({ error: 'Failed to retrieve credentials', details: error.message });
+    if (selectRes.error) {
+      console.error('Supabase select error:', selectRes.error.message);
+      return res.status(500).json({ error: 'Failed to retrieve credentials', details: selectRes.error.message });
     }
 
+    const data = selectRes.data;
     if (!data) {
       return res.status(404).json({ error: 'No credentials found' });
     }
@@ -109,14 +102,10 @@ exports.editMobileCredentials = async (req, res) => {
   }
 
   try {
-    const { user, error } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
-    if (error) return res.status(error.status || 401).json({ error: error.message });
+    const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
+    const user = authRes.user;
     const sessionData = { user };
-
-    if (sessionError) {
-      console.error('Session error:', sessionError.message);
-      return res.status(401).json({ error: 'Unauthorized: Failed to set session', details: sessionError.message });
-    }
 
     if (!sessionData.user) {
       console.error('No user in session');
@@ -126,14 +115,14 @@ exports.editMobileCredentials = async (req, res) => {
     const userId = sessionData.user.id;
     const { iv, encryptedData } = encrypt(password);
 
-    const { error } = await supabase
+    const updateRes = await supabase
       .from('mobile_de_credentials')
       .update({ username, encrypted_password: `${iv}:${encryptedData}` })
       .eq('user_id', userId);
 
-    if (error) {
-      console.error('Supabase update error:', error.message);
-      return res.status(500).json({ error: 'Failed to update credentials', details: error.message });
+    if (updateRes.error) {
+      console.error('Supabase update error:', updateRes.error.message);
+      return res.status(500).json({ error: 'Failed to update credentials', details: updateRes.error.message });
     }
 
     res.json({ message: 'mobile.de credentials updated successfully' });
@@ -148,14 +137,10 @@ exports.deleteMobileCredentials = async (req, res) => {
   const refreshToken = req.headers['x-refresh-token'];
 
   try {
-    const { user, error } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
-    if (error) return res.status(error.status || 401).json({ error: error.message });
+    const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
+    const user = authRes.user;
     const sessionData = { user };
-
-    if (sessionError) {
-      console.error('Session error:', sessionError.message);
-      return res.status(401).json({ error: 'Unauthorized: Failed to set session', details: sessionError.message });
-    }
 
     if (!sessionData.user) {
       console.error('No user in session');
@@ -164,14 +149,14 @@ exports.deleteMobileCredentials = async (req, res) => {
 
     const userId = sessionData.user.id;
 
-    const { error } = await supabase
+    const { error: deleteError } = await supabase
       .from('mobile_de_credentials')
       .delete()
       .eq('user_id', userId);
 
-    if (error) {
-      console.error('Supabase delete error:', error.message);
-      return res.status(500).json({ error: 'Failed to delete credentials', details: error.message });
+    if (deleteError) {
+      console.error('Supabase delete error:', deleteError.message);
+      return res.status(500).json({ error: 'Failed to delete credentials', details: deleteError.message });
     }
 
     res.json({ message: 'mobile.de credentials deleted successfully' });
@@ -185,30 +170,31 @@ exports.getUserCars = async (req, res) => {
   const accessToken = req.headers.authorization?.split('Bearer ')[1];
   const refreshToken = req.headers['x-refresh-token'];
 
-  const { user, error } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
-  if (error) return res.status(error.status || 401).json({ error: error.message });
+  const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+  if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
+  const user = authRes.user;
   const sessionData = { user };
 
   const userId = sessionData.user.id;
 
-  const { data, error } = await supabase
+  const credRes = await supabase
     .from('mobile_de_credentials')
     .select('username, encrypted_password')
     .eq('user_id', userId)
     .single();
 
-  if (error || !data) {
+  if (credRes.error || !credRes.data) {
     return res.status(404).json({ error: 'No credentials found' });
   }
 
-  const [iv, encryptedPassword] = data.encrypted_password.split(':');
+  const [iv, encryptedPassword] = credRes.data.encrypted_password.split(':');
   const password = decrypt(encryptedPassword, iv);
 
   // Call mobile.de API
   const response = await fetch(`https://services.mobile.de/search-api/search`, {
     method: 'GET',
     headers: {
-      'Authorization': 'Basic ' + Buffer.from(`${data.username}:${password}`).toString('base64'),
+      'Authorization': 'Basic ' + Buffer.from(`${credRes.data.username}:${password}`).toString('base64'),
       'Accept': 'application/json'
     }
   });
