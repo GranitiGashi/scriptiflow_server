@@ -163,7 +163,7 @@ exports.createCampaign = async (req, res) => {
           {
             user_id: user.id,
             facebook_page_id: creative?.page_id || null,
-            stripe_customer_id: pmRow?.stripe_customer_id || null,
+            stripe_customer_id: null,
             start_time: internal_campaign_start,
             end_time: internal_campaign_end,
             commission_percent: 0,
@@ -235,59 +235,22 @@ exports.createCampaign = async (req, res) => {
       console.error('ad_campaign_ads insert exception:', dbErr);
     }
 
+    // Validate payment method before running FB APIs (but don't charge yet)
+    let pmRow = null;
     if (total_charge > 0) {
-      // Lookup Stripe customer + payment method
-      const { data: pmRow } = await supabase
+      const pmRes = await supabase
         .from('user_payment_methods')
         .select('stripe_customer_id, payment_method_id')
         .eq('user_id', user.id)
         .maybeSingle();
+      pmRow = pmRes.data || null;
       if (!pmRow?.stripe_customer_id || !pmRow?.payment_method_id) {
         return res.status(400).json({ error: 'No default payment method on file. Please add a payment method first.' });
       }
-
-      // Validate customer exists in current Stripe environment
       try {
         await stripe.customers.retrieve(pmRow.stripe_customer_id);
       } catch (err) {
         return res.status(400).json({ error: 'Payment method invalid. Please re-add your payment method.' });
-      }
-
-      // Charge client for full amount (ad spend + service fee)
-      const paymentIntent = await stripe.paymentIntents.create({
-        amount: total_charge,
-        currency: 'eur',
-        customer: pmRow.stripe_customer_id,
-        payment_method: pmRow.payment_method_id,
-        confirm: true,
-        off_session: true,
-        description: `Ad Campaign: €${(total_budget_cents/100).toFixed(2)} ad spend + €${((service_fee_cents||0)/100).toFixed(2)} service fee`,
-        metadata: {
-          client_user_id: user.id,
-          ad_spend_cents: total_budget_cents,
-          service_fee_cents: service_fee_cents || 0,
-          campaign_duration_days
-        }
-      });
-
-      // Store campaign payment record for tracking (legacy table)
-      await supabase.from('campaign_payments').insert({
-        user_id: user.id,
-        payment_intent_id: paymentIntent.id,
-        total_amount_cents: total_charge,
-        ad_spend_cents: total_budget_cents,
-        service_fee_cents: service_fee_cents || 0,
-        campaign_duration_days,
-        status: 'paid',
-        created_at: new Date().toISOString()
-      });
-
-      // Update internal campaign status
-      if (campaignId) {
-        await supabaseAdmin
-          .from('ad_campaigns')
-          .update({ status: 'PAID' })
-          .eq('id', campaignId);
       }
     }
 
@@ -400,6 +363,45 @@ exports.createCampaign = async (req, res) => {
         .from('ad_campaign_ads')
         .update({ facebook_ad_set_id: adset_id, facebook_ad_id: ad_id, updated_at: new Date().toISOString() })
         .eq('id', campaignAdId);
+    }
+
+    // 5) Charge user only after all FB entities are successfully created
+    if (total_charge > 0 && pmRow) {
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: total_charge,
+        currency: 'eur',
+        customer: pmRow.stripe_customer_id,
+        payment_method: pmRow.payment_method_id,
+        confirm: true,
+        off_session: true,
+        description: `Ad Campaign: €${(total_budget_cents/100).toFixed(2)} ad spend + €${((service_fee_cents||0)/100).toFixed(2)} service fee`,
+        metadata: {
+          client_user_id: user.id,
+          ad_spend_cents: total_budget_cents,
+          service_fee_cents: service_fee_cents || 0,
+          campaign_duration_days
+        }
+      });
+
+      // Store campaign payment record for tracking (legacy table)
+      await supabase.from('campaign_payments').insert({
+        user_id: user.id,
+        payment_intent_id: paymentIntent.id,
+        total_amount_cents: total_charge,
+        ad_spend_cents: total_budget_cents,
+        service_fee_cents: service_fee_cents || 0,
+        campaign_duration_days,
+        status: 'paid',
+        created_at: new Date().toISOString()
+      });
+
+      // Update internal campaign status
+      if (campaignId) {
+        await supabaseAdmin
+          .from('ad_campaigns')
+          .update({ status: 'PAID' })
+          .eq('id', campaignId);
+      }
     }
 
     res.json({ campaign_id, adset_id, creative_id, ad_id });
