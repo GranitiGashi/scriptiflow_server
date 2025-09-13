@@ -61,7 +61,7 @@ exports.recommendAdPlan = async (req, res) => {
 
 Strictly return JSON with these fields only:
 {
-  "objective": "LINK_CLICKS" | "LEAD_GENERATION" | "MESSAGES",
+  "objective": "OUTCOME_TRAFFIC" | "OUTCOME_LEADS" | "OUTCOME_SALES",
   "target_audience": {
     "age": "min-max",
     "gender": "male" | "female" | "all"
@@ -276,7 +276,7 @@ exports.createCampaign = async (req, res) => {
     const campaignRes = await axios.post(`${GRAPH_BASE}/${ad_account_id}/campaigns`, null, {
       params: {
         name: creative?.campaign_name || `Car Campaign ${new Date().toISOString()}`,
-        objective: plan.objective || 'LINK_CLICKS',
+        objective: plan.objective || 'OUTCOME_TRAFFIC',
         status: 'PAUSED',
         special_ad_categories: JSON.stringify(specialAdCategories),
         access_token,
@@ -307,7 +307,7 @@ exports.createCampaign = async (req, res) => {
         name: creative?.adset_name || 'Car Ad Set',
         campaign_id,
         billing_event: 'IMPRESSIONS',
-        optimization_goal: 'LINK_CLICKS',
+        optimization_goal: 'OUTCOME_TRAFFIC',
         daily_budget,
         start_time: adset_start_time,
         end_time: adset_end_time,
