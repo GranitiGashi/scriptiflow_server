@@ -51,9 +51,10 @@ exports.getReachEstimate = async (req, res) => {
     const finalTargeting = targeting || defaultTargeting;
 
     // Get reach estimate from Facebook
-    const reachRes = await axios.get(`${GRAPH_BASE}/${ad_account_id}/reachestimate`, {
+    const reachRes = await axios.get(`${GRAPH_BASE}/act_${ad_account_id}/reachestimate`, {
       params: {
         targeting_spec: JSON.stringify(finalTargeting),
+        optimization_goal: 'REACH',
         access_token
       }
     });
