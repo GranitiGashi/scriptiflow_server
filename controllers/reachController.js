@@ -55,7 +55,7 @@ exports.getReachEstimate = async (req, res) => {
 
     // Call new Facebook Delivery Estimate endpoint
     const reachRes = await axios.get(
-      `${GRAPH_BASE}/act_${ad_account_id}/delivery_estimate`,
+      `${GRAPH_BASE}/${ad_account_id}/delivery_estimate`,
       {
         params: {
           targeting_spec: JSON.stringify(finalTargeting),
