@@ -245,16 +245,8 @@ exports.getSocialAccounts = async (req, res) => {
       return res.status(401).json({ error: 'Unauthorized: Invalid token' });
     }
 
-    const user_id = req.query.user_id;
-    if (!user_id) {
-      console.error('Missing user_id in query');
-      return res.status(400).json({ error: 'Missing user_id' });
-    }
-
-    if (user.id !== user_id) {
-      console.error('User ID mismatch:', { token_user_id: user.id, query_user_id: user_id });
-      return res.status(403).json({ error: 'Forbidden: User ID mismatch' });
-    }
+    // Prefer explicit user_id, else fallback to authenticated user
+    const user_id = req.query.user_id || user.id;
 
     // Set Supabase session for RLS
     const { error: sessionError } = await supabase.auth.setSession({

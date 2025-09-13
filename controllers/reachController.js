@@ -54,7 +54,6 @@ exports.getReachEstimate = async (req, res) => {
     const reachRes = await axios.get(`${GRAPH_BASE}/${ad_account_id}/reachestimate`, {
       params: {
         targeting_spec: JSON.stringify(finalTargeting),
-        optimize_for: 'LINK_CLICKS',
         access_token
       }
     });
