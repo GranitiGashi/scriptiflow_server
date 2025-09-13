@@ -52,6 +52,7 @@ exports.getReachEstimate = async (req, res) => {
     };
 
     const finalTargeting = targeting || defaultTargeting;
+    console.log("Targeting spec sent:", finalTargeting);
 
     // Call new Facebook Delivery Estimate endpoint
     const reachRes = await axios.get(

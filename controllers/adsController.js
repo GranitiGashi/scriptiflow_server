@@ -261,6 +261,17 @@ exports.createCampaign = async (req, res) => {
     const access_token = tokenRecord.access_token;
 
     // 1) Create campaign
+
+        // Normalize special ad categories
+        let specialAdCategories = plan.special_ad_categories || [];
+        if (!Array.isArray(specialAdCategories)) specialAdCategories = [specialAdCategories].filter(Boolean);
+        specialAdCategories = specialAdCategories.map((c) => String(c || '').toUpperCase());
+        if (specialAdCategories.length === 1 && (specialAdCategories[0] === 'NONE' || specialAdCategories[0] === 'NO' || specialAdCategories[0] === 'N/A')) {
+          specialAdCategories = [];
+        }
+        const allowedCats = new Set(['CREDIT','EMPLOYMENT','HOUSING','ISSUES_ELECTIONS_POLITICS','ONLINE_GAMBLING_AND_GAMING','OTHER']);
+        specialAdCategories = specialAdCategories.filter((c) => allowedCats.has(c));
+
     // Use ad_account_id directly (should already include act_ prefix)
     const campaignRes = await axios.post(`${GRAPH_BASE}/${ad_account_id}/campaigns`, null, {
       params: {
@@ -281,15 +292,7 @@ exports.createCampaign = async (req, res) => {
         .eq('id', campaignId);
     }
 
-    // Normalize special ad categories
-    let specialAdCategories = plan.special_ad_categories || [];
-    if (!Array.isArray(specialAdCategories)) specialAdCategories = [specialAdCategories].filter(Boolean);
-    specialAdCategories = specialAdCategories.map((c) => String(c || '').toUpperCase());
-    if (specialAdCategories.length === 1 && (specialAdCategories[0] === 'NONE' || specialAdCategories[0] === 'NO' || specialAdCategories[0] === 'N/A')) {
-      specialAdCategories = [];
-    }
-    const allowedCats = new Set(['CREDIT','EMPLOYMENT','HOUSING','ISSUES_ELECTIONS_POLITICS','ONLINE_GAMBLING_AND_GAMING','OTHER']);
-    specialAdCategories = specialAdCategories.filter((c) => allowedCats.has(c));
+
 
     // 2) Create ad set
     const adset_start_time = plan.start_time || new Date(Date.now() + 15 * 60 * 1000).toISOString();
