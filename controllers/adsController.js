@@ -1,5 +1,6 @@
 const axios = require('axios');
 const supabase = require('../config/supabaseClient');
+const supabaseAdmin = require('../config/supabaseAdmin');
 const stripe = require('../utils/stripeClient');
 const openai = require('../utils/openaiClient');
 const { getFacebookUserToken } = require('../models/socialTokenModel');
@@ -148,6 +149,92 @@ exports.createCampaign = async (req, res) => {
     // Calculate total amount to charge client (ad spend + service fee)
     const total_charge = total_budget_cents + (service_fee_cents || 0);
 
+    // Create internal campaign record before charge & FB calls
+    // Compute timing
+    const internal_campaign_start = plan.start_time || new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    const internal_campaign_end = plan.end_time || new Date(Date.now() + (plan.duration_days || 7) * 86400000).toISOString();
+
+    // Insert campaign
+    let campaignId = null;
+    try {
+      const { data: campRow, error: campErr } = await supabaseAdmin
+        .from('ad_campaigns')
+        .insert([
+          {
+            user_id: user.id,
+            facebook_page_id: creative?.page_id || null,
+            stripe_customer_id: pmRow?.stripe_customer_id || null,
+            start_time: internal_campaign_start,
+            end_time: internal_campaign_end,
+            commission_percent: 0,
+            retry_count: 0,
+            ad_account_id,
+            call_to_action_link: creative?.url || null,
+            body: creative?.primary_text || null,
+            title: creative?.headline || null,
+            name: creative?.campaign_name || `Car Campaign ${new Date().toISOString()}`,
+            status: 'CREATING',
+          },
+        ])
+        .select('id')
+        .single();
+      if (campErr) {
+        console.error('ad_campaigns insert error:', campErr.message);
+      } else {
+        campaignId = campRow.id;
+      }
+    } catch (dbErr) {
+      console.error('ad_campaigns insert exception:', dbErr);
+    }
+
+    // Insert single ad row for this campaign
+    let campaignAdId = null;
+    try {
+      const lifetimeBudgetCents = (plan.daily_budget_cents || 0) * (plan.duration_days || 1);
+      const placements = Array.isArray(plan.placements) ? plan.placements : [];
+      const publisher_platforms = Array.from(
+        new Set(
+          placements.map((pl) => (pl.startsWith('instagram_') ? 'instagram' : pl.startsWith('facebook_') ? 'facebook' : null)).filter(Boolean)
+        )
+      );
+      const facebook_positions = placements
+        .filter((pl) => pl.startsWith('facebook_'))
+        .map((pl) => (pl.endsWith('feeds') ? 'feed' : pl.replace('facebook_', '')));
+      const instagram_positions = placements
+        .filter((pl) => pl.startsWith('instagram_'))
+        .map((pl) => (pl.endsWith('feeds') ? 'feed' : pl.replace('instagram_', '')));
+
+      const geo = plan?.targeting?.geo_locations || {};
+      const locations = Array.isArray(geo?.custom_locations)
+        ? geo.custom_locations.map((l) => ({ latitude: l.latitude, longitude: l.longitude, radius: l.radius, distance_unit: l.distance_unit }))
+        : [];
+
+      if (campaignId) {
+        const { data: adRow, error: adErr } = await supabaseAdmin
+          .from('ad_campaign_ads')
+          .insert([
+            {
+              campaign_id: campaignId,
+              lifetime_budget_cents: lifetimeBudgetCents,
+              publisher_platforms,
+              facebook_positions,
+              instagram_positions,
+              locations,
+              template_image_url: creative?.image_url || null,
+            },
+          ])
+          .select('id')
+          .single();
+        if (adErr) {
+          console.error('ad_campaign_ads insert error:', adErr.message);
+        } else {
+          campaignAdId = adRow.id;
+        }
+      }
+    } catch (dbErr) {
+      console.error('ad_campaign_ads insert exception:', dbErr);
+    }
+
     if (total_charge > 0) {
       // Lookup Stripe customer + payment method
       const { data: pmRow } = await supabase
@@ -183,7 +270,7 @@ exports.createCampaign = async (req, res) => {
         }
       });
 
-      // Store campaign payment record for tracking
+      // Store campaign payment record for tracking (legacy table)
       await supabase.from('campaign_payments').insert({
         user_id: user.id,
         payment_intent_id: paymentIntent.id,
@@ -194,6 +281,14 @@ exports.createCampaign = async (req, res) => {
         status: 'paid',
         created_at: new Date().toISOString()
       });
+
+      // Update internal campaign status
+      if (campaignId) {
+        await supabaseAdmin
+          .from('ad_campaigns')
+          .update({ status: 'PAID' })
+          .eq('id', campaignId);
+      }
     }
 
     const tokenRecord = await getFacebookUserToken(user.id);
@@ -215,6 +310,14 @@ exports.createCampaign = async (req, res) => {
     });
     const campaign_id = campaignRes.data.id;
 
+    // Update internal campaign with FB campaign id
+    if (campaignId) {
+      await supabaseAdmin
+        .from('ad_campaigns')
+        .update({ facebook_campaign_id: campaign_id, status: 'CAMPAIGN_CREATED', updated_at: new Date().toISOString() })
+        .eq('id', campaignId);
+    }
+
     // Normalize special ad categories
     let specialAdCategories = plan.special_ad_categories || [];
     if (!Array.isArray(specialAdCategories)) specialAdCategories = [specialAdCategories].filter(Boolean);
@@ -226,8 +329,8 @@ exports.createCampaign = async (req, res) => {
     specialAdCategories = specialAdCategories.filter((c) => allowedCats.has(c));
 
     // 2) Create ad set
-    const start_time = plan.start_time || new Date(Date.now() + 15 * 60 * 1000).toISOString();
-    const end_time = plan.end_time || new Date(Date.now() + (plan.duration_days || 7) * 86400000).toISOString();
+    const adset_start_time = plan.start_time || new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    const adset_end_time = plan.end_time || new Date(Date.now() + (plan.duration_days || 7) * 86400000).toISOString();
     const daily_budget = plan.daily_budget_cents || 1000; // in cents
     const targeting = plan.targeting || { geo_locations: { countries: [plan.country || 'DE'] } };
 
@@ -240,8 +343,8 @@ exports.createCampaign = async (req, res) => {
         billing_event: 'IMPRESSIONS',
         optimization_goal: 'LINK_CLICKS',
         daily_budget,
-        start_time,
-        end_time,
+        start_time: adset_start_time,
+        end_time: adset_end_time,
         targeting: JSON.stringify(targeting),
         status: 'PAUSED',
         access_token,
@@ -291,6 +394,14 @@ exports.createCampaign = async (req, res) => {
     });
     const ad_id = adRes.data.id;
 
+    // Update internal ad row with FB ids
+    if (campaignAdId) {
+      await supabaseAdmin
+        .from('ad_campaign_ads')
+        .update({ facebook_ad_set_id: adset_id, facebook_ad_id: ad_id, updated_at: new Date().toISOString() })
+        .eq('id', campaignAdId);
+    }
+
     res.json({ campaign_id, adset_id, creative_id, ad_id });
   } catch (err) {
     console.error('createCampaign error:', err.response?.data || err.message);
@@ -328,6 +439,25 @@ exports.getInsights = async (req, res) => {
     const fields = 'impressions,reach,clicks,ctr,cpc,spend,unique_clicks,actions';
     const url = `${GRAPH_BASE}/${entity_id}/insights`;
     const { data } = await axios.get(url, { params: { fields, date_preset, access_token } });
+
+    // Persist insights if we can map to our campaign
+    if (entity_type === 'campaign') {
+      try {
+        const { data: camp } = await supabaseAdmin
+          .from('ad_campaigns')
+          .select('id')
+          .eq('facebook_campaign_id', entity_id)
+          .maybeSingle();
+        if (camp?.id) {
+          await supabaseAdmin
+            .from('ad_campaign_insights')
+            .insert([{ campaign_id: camp.id, payload: data, fetched_at: new Date().toISOString() }]);
+        }
+      } catch (e) {
+        console.error('Persist insight error:', e?.message || e);
+      }
+    }
+
     res.json(data);
   } catch (err) {
     console.error('getInsights error:', err.response?.data || err.message);
