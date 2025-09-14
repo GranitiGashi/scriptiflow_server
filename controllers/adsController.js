@@ -15,6 +15,70 @@ async function getSupabaseUser(req) {
   return { user, accessToken };
 }
 
+/**
+ * Helpers: map legacy objectives -> new OUTCOME_* campaign objectives,
+ * and map campaign objectives -> valid optimization goals acceptable by Facebook.
+ */
+const VALID_OPTIMIZATION_GOALS = new Set([
+  "NONE","APP_INSTALLS","AD_RECALL_LIFT","ENGAGED_USERS","EVENT_RESPONSES",
+  "IMPRESSIONS","LEAD_GENERATION","QUALITY_LEAD","LINK_CLICKS","OFFSITE_CONVERSIONS",
+  "PAGE_LIKES","POST_ENGAGEMENT","QUALITY_CALL","REACH","LANDING_PAGE_VIEWS",
+  "VISIT_INSTAGRAM_PROFILE","VALUE","THRUPLAY","DERIVED_EVENTS",
+  "APP_INSTALLS_AND_OFFSITE_CONVERSIONS","CONVERSATIONS","IN_APP_VALUE",
+  "MESSAGING_PURCHASE_CONVERSION","SUBSCRIBERS","REMINDERS_SET",
+  "MEANINGFUL_CALL_ATTEMPT","PROFILE_VISIT","PROFILE_AND_PAGE_ENGAGEMENT",
+  "ADVERTISER_SILOED_VALUE","AUTOMATIC_OBJECTIVE","MESSAGING_APPOINTMENT_CONVERSION"
+]);
+
+function mapCampaignObjective(obj) {
+  if (!obj) return 'OUTCOME_TRAFFIC';
+  const key = String(obj).toUpperCase();
+  // already an OUTCOME_* value?
+  if (key.startsWith('OUTCOME_')) return key;
+  switch (key) {
+    case 'LINK_CLICKS':
+    case 'TRAFFIC':
+      return 'OUTCOME_TRAFFIC';
+    case 'CONVERSIONS':
+    case 'SALES':
+      return 'OUTCOME_SALES';
+    case 'LEAD_GENERATION':
+    case 'LEADS':
+      return 'OUTCOME_LEADS';
+    case 'POST_ENGAGEMENT':
+    case 'ENGAGEMENT':
+      return 'OUTCOME_ENGAGEMENT';
+    case 'AWARENESS':
+    case 'BRAND_AWARENESS':
+      return 'OUTCOME_AWARENESS';
+    case 'APP_INSTALLS':
+      return 'OUTCOME_APP_PROMOTION';
+    default:
+      return 'OUTCOME_TRAFFIC';
+  }
+}
+
+function mapOptimizationGoal(campaignObjective) {
+  // campaignObjective is expected to be an OUTCOME_* value
+  switch (campaignObjective) {
+    case 'OUTCOME_AWARENESS':
+      return 'REACH';
+    case 'OUTCOME_TRAFFIC':
+      // prefer LINK_CLICKS for traffic/outcome_traffic
+      return 'LINK_CLICKS';
+    case 'OUTCOME_ENGAGEMENT':
+      return 'POST_ENGAGEMENT';
+    case 'OUTCOME_LEADS':
+      return 'LEAD_GENERATION';
+    case 'OUTCOME_SALES':
+      return 'OFFSITE_CONVERSIONS';
+    case 'OUTCOME_APP_PROMOTION':
+      return 'APP_INSTALLS';
+    default:
+      return 'IMPRESSIONS';
+  }
+}
+
 // DEPRECATED: In agency model, we use agency ad accounts instead of client ad accounts
 exports.listAdAccounts = async (req, res) => {
   console.log('🚀 [listAdAccounts] Redirecting to agency ad accounts...');
@@ -260,23 +324,29 @@ exports.createCampaign = async (req, res) => {
     }
     const access_token = tokenRecord.access_token;
 
+    // Normalize special ad categories early
+    let specialAdCategories = plan.special_ad_categories || [];
+    if (!Array.isArray(specialAdCategories)) specialAdCategories = [specialAdCategories].filter(Boolean);
+    specialAdCategories = specialAdCategories.map((c) => String(c || '').toUpperCase());
+    if (specialAdCategories.length === 1 && (specialAdCategories[0] === 'NONE' || specialAdCategories[0] === 'NO' || specialAdCategories[0] === 'N/A')) {
+      specialAdCategories = [];
+    }
+    const allowedCats = new Set(['CREDIT','EMPLOYMENT','HOUSING','ISSUES_ELECTIONS_POLITICS','ONLINE_GAMBLING_AND_GAMING','OTHER']);
+    specialAdCategories = specialAdCategories.filter((c) => allowedCats.has(c));
+
+    // Map & validate campaign objective (use OUTCOME_*)
+    const campaignObjective = mapCampaignObjective(plan.objective);
+    // Map optimization goal from campaign objective and validate
+    const optimizationGoal = mapOptimizationGoal(campaignObjective);
+    if (!VALID_OPTIMIZATION_GOALS.has(optimizationGoal)) {
+      return res.status(400).json({ error: `Mapped optimization_goal "${optimizationGoal}" is not valid for this FB API version.` });
+    }
+
     // 1) Create campaign
-
-        // Normalize special ad categories
-        let specialAdCategories = plan.special_ad_categories || [];
-        if (!Array.isArray(specialAdCategories)) specialAdCategories = [specialAdCategories].filter(Boolean);
-        specialAdCategories = specialAdCategories.map((c) => String(c || '').toUpperCase());
-        if (specialAdCategories.length === 1 && (specialAdCategories[0] === 'NONE' || specialAdCategories[0] === 'NO' || specialAdCategories[0] === 'N/A')) {
-          specialAdCategories = [];
-        }
-        const allowedCats = new Set(['CREDIT','EMPLOYMENT','HOUSING','ISSUES_ELECTIONS_POLITICS','ONLINE_GAMBLING_AND_GAMING','OTHER']);
-        specialAdCategories = specialAdCategories.filter((c) => allowedCats.has(c));
-
-    // Use ad_account_id directly (should already include act_ prefix)
     const campaignRes = await axios.post(`${GRAPH_BASE}/${ad_account_id}/campaigns`, null, {
       params: {
         name: creative?.campaign_name || `Car Campaign ${new Date().toISOString()}`,
-        objective: plan.objective || 'OUTCOME_TRAFFIC',
+        objective: campaignObjective,
         status: 'PAUSED',
         special_ad_categories: JSON.stringify(specialAdCategories),
         access_token,
@@ -292,8 +362,6 @@ exports.createCampaign = async (req, res) => {
         .eq('id', campaignId);
     }
 
-
-
     // 2) Create ad set
     const adset_start_time = plan.start_time || new Date(Date.now() + 15 * 60 * 1000).toISOString();
     const adset_end_time = plan.end_time || new Date(Date.now() + (plan.duration_days || 7) * 86400000).toISOString();
@@ -301,13 +369,14 @@ exports.createCampaign = async (req, res) => {
     const targeting = plan.targeting || { geo_locations: { countries: [plan.country || 'DE'] } };
 
     console.log('Special ad categories (normalized):', specialAdCategories);
+    console.log('Using campaignObjective:', campaignObjective, 'optimizationGoal:', optimizationGoal);
 
     const adsetRes = await axios.post(`${GRAPH_BASE}/${ad_account_id}/adsets`, null, {
       params: {
         name: creative?.adset_name || 'Car Ad Set',
         campaign_id,
         billing_event: 'IMPRESSIONS',
-        optimization_goal: 'OUTCOME_TRAFFIC',
+        optimization_goal: optimizationGoal, // <- valid mapped value
         daily_budget,
         start_time: adset_start_time,
         end_time: adset_end_time,
@@ -469,5 +538,3 @@ exports.getInsights = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch insights' });
   }
 };
-
-
