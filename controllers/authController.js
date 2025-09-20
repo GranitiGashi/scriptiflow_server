@@ -224,7 +224,7 @@ async function forgotPassword(req, res) {
   if (!email) return res.status(400).json({ error: 'Email is required' });
 
   try {
-    const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const FRONTEND_URL = process.env.FRONTEND_URL;
     const { data, error } = await supabaseAdmin.auth.admin.generateLink({
       type: 'recovery',
       email,
