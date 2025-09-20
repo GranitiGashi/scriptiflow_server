@@ -182,7 +182,7 @@ async function inviteUser(req, res) {
     const { email, full_name, company_name, role = 'client', permissions = {} } = req.body || {};
     if (!email) return res.status(400).json({ error: 'Email is required' });
 
-    const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const FRONTEND_URL = process.env.FRONTEND_URL;
     // Generate an invite link (we will email with our own template)
     const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
       type: 'invite',
