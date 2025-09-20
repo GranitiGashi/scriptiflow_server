@@ -187,7 +187,7 @@ async function inviteUser(req, res) {
     const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
       type: 'invite',
       email,
-      options: { redirectTo: `http://localhost:3000/auth/new-password` },
+      options: { redirectTo: `${FRONTEND_URL}/auth/new-password` },
     });
     if (linkError) return res.status(400).json({ error: linkError.message });
 
@@ -228,7 +228,7 @@ async function forgotPassword(req, res) {
     const { data, error } = await supabaseAdmin.auth.admin.generateLink({
       type: 'recovery',
       email,
-      options: { redirectTo: `http://localhost:3000/auth/new-password` },
+      options: { redirectTo: `${FRONTEND_URL}/auth/new-password` },
     });
     if (error) return res.status(400).json({ error: error.message });
 
