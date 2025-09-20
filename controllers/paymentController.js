@@ -1,5 +1,6 @@
 const supabase = require('../config/supabaseClient');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const { getUserFromRequest } = require('../utils/authUser');
 
 
 exports.savePaymentMethod = async (req, res) => {
