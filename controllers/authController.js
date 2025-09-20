@@ -96,16 +96,28 @@ async function login(req, res) {
     return res.status(401).json({ error: authError.message });
   }
 
-  // Get user metadata from users_app table
-  const { data: userData, error: userError } = await supabase
+  // Get user metadata from users_app table; auto-provision if missing
+  let { data: userData, error: userError } = await supabase
     .from('users_app')
     .select('*')
     .eq('id', sessionData.user.id)
-    .single();
+    .maybeSingle();
 
-  if (userError) {
-    console.error('Supabase User Fetch Error:', userError.message);
-    return res.status(500).json({ error: userError.message });
+  if (!userData) {
+    // Create a minimal profile row if absent
+    const { data: created, error: upsertErr } = await supabaseAdmin
+      .from('users_app')
+      .upsert({
+        id: sessionData.user.id,
+        email: sessionData.user.email,
+        role: 'client',
+        permissions: { tier: 'basic' },
+      }, { onConflict: 'id' })
+      .select('*')
+      .single();
+    if (!upsertErr) {
+      userData = created;
+    }
   }
 
   return res.status(200).json({
@@ -134,16 +146,27 @@ async function refresh(req, res) {
       return res.status(401).json({ error: 'Invalid refresh token' });
     }
 
-    // Get user metadata from users_app table
-    const { data: userData, error: userError } = await supabase
+    // Get user metadata from users_app table; auto-provision if missing
+    let { data: userData, error: userError } = await supabase
       .from('users_app')
       .select('*')
       .eq('id', sessionData.user.id)
-      .single();
+      .maybeSingle();
 
-    if (userError) {
-      console.error('Supabase User Fetch Error:', userError.message);
-      return res.status(500).json({ error: userError.message });
+    if (!userData) {
+      const { data: created, error: upsertErr } = await supabaseAdmin
+        .from('users_app')
+        .upsert({
+          id: sessionData.user.id,
+          email: sessionData.user.email,
+          role: 'client',
+          permissions: { tier: 'basic' },
+        }, { onConflict: 'id' })
+        .select('*')
+        .single();
+      if (!upsertErr) {
+        userData = created;
+      }
     }
 
     return res.status(200).json({
@@ -193,9 +216,12 @@ async function inviteUser(req, res) {
 
     const invitedUserId = linkData?.user?.id;
     if (invitedUserId) {
-      await supabase
+      const { error: upsertErr } = await supabaseAdmin
         .from('users_app')
         .upsert({ id: invitedUserId, email, full_name, company_name, role, permissions });
+      if (upsertErr) {
+        console.error('users_app upsert error (invite):', upsertErr.message);
+      }
     }
 
     // Send branded email with action_link
