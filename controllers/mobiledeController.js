@@ -275,7 +275,7 @@ exports.getMobileDeListings = async (req, res) => {
 
     const { data, error } = await supabase
       .from('mobile_de_listings')
-      .select('mobile_ad_id, first_seen, last_seen, details, image_xxxl_url')
+      .select('mobile_ad_id, first_seen, last_seen, details, image_xxxl_url, images')
       .eq('user_id', userId)
       .order('first_seen', { ascending: false })
       .limit(limit);
@@ -337,11 +337,13 @@ exports.syncMobileDe = async (req, res) => {
       // Fetch full details for new ad
       let details = null;
       let image_xxxl_url = null;
+      let imagesArr = [];
       try {
         details = await fetchMobileDeDetails(username, password, mobileAdId);
         const imgs = Array.isArray(details?.images) ? details.images : [];
         // Always prefer xxxl as requested
         image_xxxl_url = imgs.find(i => i?.xxxl)?.xxxl || null;
+        imagesArr = imgs.map(i => i?.xxxl || i?.xxl || i?.xl || i?.l || i?.m || i?.s).filter(Boolean);
       } catch (e) {
         // Continue even if details fail; we still store the ad id
       }
@@ -353,6 +355,7 @@ exports.syncMobileDe = async (req, res) => {
           mobile_ad_id: mobileAdId,
           details,
           image_xxxl_url,
+          images: imagesArr.length ? imagesArr : null,
           first_seen: new Date().toISOString(),
           last_seen: new Date().toISOString(),
         });
@@ -360,6 +363,7 @@ exports.syncMobileDe = async (req, res) => {
       // Enqueue social posts (facebook + instagram if linked)
       const platforms = ['facebook', 'instagram'];
       for (const platform of platforms) {
+        const caption = `${(details?.make || ad.make || '').toString()} ${(details?.model || ad.model || '').toString()}`.trim();
         await supabase
           .from('social_post_jobs')
           .insert({
@@ -367,8 +371,8 @@ exports.syncMobileDe = async (req, res) => {
             platform,
             mobile_ad_id: mobileAdId,
             payload: {
-              image_url: image_xxxl_url || null,
-              caption: `${details?.make || ad.make || ''} ${details?.model || ad.model || ''}`.trim(),
+              images: imagesArr.length ? imagesArr : (image_xxxl_url ? [image_xxxl_url] : []),
+              caption,
               detail_url: details?.detailPageUrl || ad.detailPageUrl || null,
             },
           });
