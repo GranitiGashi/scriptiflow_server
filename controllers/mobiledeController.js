@@ -287,6 +287,53 @@ exports.getMobileDeListings = async (req, res) => {
   }
 };
 
+// Seed a dummy listing and enqueue social jobs (testing helper)
+exports.seedDummyListing = async (req, res) => {
+  try {
+    const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
+    const userId = authRes.user.id;
+
+    const { mobile_ad_id, images = [], make = 'MERCEDES-BENZ', model = 'C 43 AMG', detail_url, caption } = req.body || {};
+    const adId = String(mobile_ad_id || `dummy-${Date.now()}`);
+    const imagesArr = Array.isArray(images) ? images.filter(Boolean).slice(0, 10) : [];
+    const image_xxxl_url = imagesArr[0] || null;
+
+    await supabase
+      .from('mobile_de_listings')
+      .upsert({
+        user_id: userId,
+        mobile_ad_id: adId,
+        details: { make, model, detailPageUrl: detail_url || null },
+        image_xxxl_url,
+        images: imagesArr.length ? imagesArr : null,
+        first_seen: new Date().toISOString(),
+        last_seen: new Date().toISOString(),
+      });
+
+    const baseCaption = `${make} ${model}`.trim();
+    const payload = {
+      images: imagesArr,
+      caption: caption || baseCaption,
+      detail_url: detail_url || null,
+      make,
+      model,
+    };
+
+    // enqueue for fb and ig
+    for (const platform of ['facebook', 'instagram']) {
+      await supabase
+        .from('social_post_jobs')
+        .insert({ user_id: userId, platform, mobile_ad_id: adId, payload });
+    }
+
+    return res.json({ seeded: true, mobile_ad_id: adId, images: imagesArr.length });
+  } catch (err) {
+    console.error('seedDummyListing error:', err);
+    return res.status(500).json({ error: 'Failed to seed dummy listing', details: err.message });
+  }
+};
+
 // Sync new listings and enqueue social posts
 exports.syncMobileDe = async (req, res) => {
   try {
