@@ -17,7 +17,7 @@ const app = express();
 app.set('etag', false);
 app.use(cors());
 // Stripe webhook must be defined before express.json so body isn't parsed
-const paymentController = require('./controllers/paymentController');
+// const paymentController = require('./controllers/paymentController');
 app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), paymentController.stripeWebhook);
 app.use(express.json());
 // Ensure API responses are not cached by intermediaries/browsers
@@ -30,7 +30,7 @@ app.use((req, res, next) => {
 });
 
 // Stripe webhook must use raw body for signature verification
-app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), paymentController.stripeWebhook);
+// app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), paymentController.stripeWebhook);
 
 // Add request logging middleware
 app.use((req, res, next) => {
