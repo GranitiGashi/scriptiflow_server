@@ -8,5 +8,8 @@ router.get('/connect-mobile-de', mobiledeController.getMobileCredentials);
 router.put('/connect-mobile-de', mobiledeController.editMobileCredentials);
 router.delete('/connect-mobile-de', mobiledeController.deleteMobileCredentials);
 router.get('/get-user-cars', mobiledeController.getUserCars);
+router.post('/mobilede/sync-now', mobiledeController.syncMobileDe);
+router.get('/mobilede/status', mobiledeController.getMobileDeStatus);
+router.get('/mobilede/listings', mobiledeController.getMobileDeListings);
 
 module.exports = router;

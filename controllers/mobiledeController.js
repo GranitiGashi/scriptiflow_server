@@ -2,6 +2,37 @@
 const supabase = require('../config/supabaseClient');
 const { getUserFromRequest } = require('../utils/authUser');
 const { encrypt, decrypt } = require('../utils/crypto');
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+
+async function fetchMobileDeListings(username, password) {
+  const response = await fetch(`https://services.mobile.de/search-api/search`, {
+    method: 'GET',
+    headers: {
+      'Authorization': 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64'),
+      'Accept': 'application/json'
+    }
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`mobile.de search failed: ${response.status} ${text}`);
+  }
+  return await response.json();
+}
+
+async function fetchMobileDeDetails(username, password, mobileAdId) {
+  const response = await fetch(`https://services.mobile.de/search-api/search/${encodeURIComponent(mobileAdId)}`, {
+    method: 'GET',
+    headers: {
+      'Authorization': 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64'),
+      'Accept': 'application/json'
+    }
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`mobile.de details failed: ${response.status} ${text}`);
+  }
+  return await response.json();
+}
 
 // controllers/mobiledeController.js
 exports.connectMobile = async (req, res) => {
@@ -201,4 +232,166 @@ exports.getUserCars = async (req, res) => {
 
   const cars = await response.json();
   res.json(cars);
+};
+
+// Get sync status and counts
+exports.getMobileDeStatus = async (req, res) => {
+  try {
+    const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
+    const userId = authRes.user.id;
+
+    const { data: cred } = await supabase
+      .from('mobile_de_credentials')
+      .select('last_sync_at')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    const { data: countRows, error: countErr } = await supabase
+      .from('mobile_de_listings')
+      .select('mobile_ad_id', { count: 'exact', head: true })
+      .eq('user_id', userId);
+    const total_listings = (countRows && Array.isArray(countRows)) ? countRows.length : (countRows?.length || null);
+
+    const { data: latest } = await supabase
+      .from('mobile_de_listings')
+      .select('first_seen')
+      .eq('user_id', userId)
+      .order('first_seen', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    return res.json({
+      last_sync_at: cred?.last_sync_at || null,
+      latest_first_seen: latest?.first_seen || null,
+      total_listings: total_listings,
+    });
+  } catch (err) {
+    console.error('getMobileDeStatus error:', err);
+    return res.status(500).json({ error: 'Failed to get status', details: err.message });
+  }
+};
+
+// List recent listings
+exports.getMobileDeListings = async (req, res) => {
+  try {
+    const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
+    const userId = authRes.user.id;
+    const limit = Math.min(parseInt(req.query.limit || '20', 10) || 20, 100);
+
+    const { data, error } = await supabase
+      .from('mobile_de_listings')
+      .select('mobile_ad_id, first_seen, last_seen, details, image_xxxl_url')
+      .eq('user_id', userId)
+      .order('first_seen', { ascending: false })
+      .limit(limit);
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json(data || []);
+  } catch (err) {
+    console.error('getMobileDeListings error:', err);
+    return res.status(500).json({ error: 'Failed to get listings', details: err.message });
+  }
+};
+
+// Sync new listings and enqueue social posts
+exports.syncMobileDe = async (req, res) => {
+  try {
+    const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
+    const userId = authRes.user.id;
+
+    const credRes = await supabase
+      .from('mobile_de_credentials')
+      .select('username, encrypted_password')
+      .eq('user_id', userId)
+      .single();
+    if (credRes.error || !credRes.data) {
+      return res.status(404).json({ error: 'No mobile.de credentials found' });
+    }
+    const [iv, encryptedPassword] = credRes.data.encrypted_password.split(':');
+    const password = decrypt(encryptedPassword, iv);
+    const username = credRes.data.username;
+
+    // Fetch current listings
+    const searchData = await fetchMobileDeListings(username, password);
+    const ads = Array.isArray(searchData?.['search-result']?.ads?.ad)
+      ? searchData['search-result'].ads.ad
+      : [];
+
+    let newCount = 0;
+    for (const ad of ads) {
+      const mobileAdId = String(ad.id || ad.mobileAdId || ad['mobile-ad-id'] || '').trim();
+      if (!mobileAdId) continue;
+
+      // Upsert only if new
+      const { data: existing } = await supabase
+        .from('mobile_de_listings')
+        .select('mobile_ad_id')
+        .eq('user_id', userId)
+        .eq('mobile_ad_id', mobileAdId)
+        .maybeSingle();
+      if (existing) {
+        // Update last_seen
+        await supabase
+          .from('mobile_de_listings')
+          .update({ last_seen: new Date().toISOString() })
+          .eq('user_id', userId)
+          .eq('mobile_ad_id', mobileAdId);
+        continue;
+      }
+
+      // Fetch full details for new ad
+      let details = null;
+      let image_xxxl_url = null;
+      try {
+        details = await fetchMobileDeDetails(username, password, mobileAdId);
+        const imgs = Array.isArray(details?.images) ? details.images : [];
+        // Always prefer xxxl as requested
+        image_xxxl_url = imgs.find(i => i?.xxxl)?.xxxl || null;
+      } catch (e) {
+        // Continue even if details fail; we still store the ad id
+      }
+
+      await supabase
+        .from('mobile_de_listings')
+        .insert({
+          user_id: userId,
+          mobile_ad_id: mobileAdId,
+          details,
+          image_xxxl_url,
+          first_seen: new Date().toISOString(),
+          last_seen: new Date().toISOString(),
+        });
+
+      // Enqueue social posts (facebook + instagram if linked)
+      const platforms = ['facebook', 'instagram'];
+      for (const platform of platforms) {
+        await supabase
+          .from('social_post_jobs')
+          .insert({
+            user_id: userId,
+            platform,
+            mobile_ad_id: mobileAdId,
+            payload: {
+              image_url: image_xxxl_url || null,
+              caption: `${details?.make || ad.make || ''} ${details?.model || ad.model || ''}`.trim(),
+              detail_url: details?.detailPageUrl || ad.detailPageUrl || null,
+            },
+          });
+      }
+      newCount += 1;
+    }
+
+    // Update last_sync_at
+    await supabase
+      .from('mobile_de_credentials')
+      .update({ last_sync_at: new Date().toISOString() })
+      .eq('user_id', userId);
+
+    return res.json({ synced: true, new_listings: newCount, total_seen: ads.length });
+  } catch (err) {
+    console.error('syncMobileDe error:', err);
+    return res.status(500).json({ error: 'Failed to sync mobile.de', details: err.message });
+  }
 };
