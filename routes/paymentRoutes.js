@@ -9,6 +9,7 @@ const {
   chargeSavedCard,
   createPaymentIntent,
   getStripeStatus,
+  createCheckoutSession,
 } = require('../controllers/paymentController');
 
 router.post('/payment-method', savePaymentMethod);
@@ -21,5 +22,6 @@ router.get('/stripe/status', getStripeStatus);
 // Payment processing routes
 router.post('/payment/charge-saved-card', chargeSavedCard);
 router.post('/create-payment-intent', createPaymentIntent);
+router.post('/pricing/create-checkout-session', createCheckoutSession);
 
 module.exports = router;
