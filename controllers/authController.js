@@ -210,7 +210,7 @@ async function inviteUser(req, res) {
     const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
       type: 'invite',
       email,
-      options: { redirectTo: `${FRONTEND_URL}/auth/new-password` },
+      options: { redirectTo: `${FRONTEND_URL}/auth/new-password?mode=invite` },
     });
     if (linkError) return res.status(400).json({ error: linkError.message });
 
@@ -254,7 +254,7 @@ async function forgotPassword(req, res) {
     const { data, error } = await supabaseAdmin.auth.admin.generateLink({
       type: 'recovery',
       email,
-      options: { redirectTo: `${FRONTEND_URL}/auth/new-password` },
+      options: { redirectTo: `${FRONTEND_URL}/auth/new-password?mode=recovery` },
     });
     if (error) return res.status(400).json({ error: error.message });
 
@@ -284,15 +284,41 @@ async function setPassword(req, res) {
     return res.status(401).json({ error: 'Unauthorized: Missing token' });
   }
   const token = authHeader.split(' ')[1];
-  const { password } = req.body || {};
+  const { password, mode } = req.body || {};
   if (!password || password.length < 8) {
     return res.status(400).json({ error: 'Password must be at least 8 characters' });
   }
   try {
     const { error: sessionError } = await supabase.auth.setSession({ access_token: token, refresh_token: refreshToken || null });
     if (sessionError) return res.status(401).json({ error: 'Invalid or expired session' });
+    // When coming from invite flow, enforce one-time guard
+    if (mode === 'invite') {
+      const { data: me, error: whoErr } = await supabase.auth.getUser(token);
+      if (whoErr || !me?.user?.id) return res.status(401).json({ error: 'Invalid session' });
+      const userId = me.user.id;
+      // If password_set_at already set, block re-use
+      const { data: prof } = await supabase
+        .from('users_app')
+        .select('password_set_at')
+        .eq('id', userId)
+        .maybeSingle();
+      if (prof?.password_set_at) {
+        return res.status(410).json({ error: 'Invite link already used' });
+      }
+    }
     const { error: updError } = await supabase.auth.updateUser({ password });
     if (updError) return res.status(400).json({ error: updError.message });
+    // Mark password_set_at on first successful set
+    try {
+      const { data: me2 } = await supabase.auth.getUser(token);
+      const userId2 = me2?.user?.id;
+      if (userId2) {
+        await supabaseAdmin
+          .from('users_app')
+          .update({ password_set_at: new Date().toISOString() })
+          .eq('id', userId2);
+      }
+    } catch (_) {}
     return res.json({ status: 'password_set' });
   } catch (err) {
     return res.status(500).json({ error: err.message || 'Internal server error' });
