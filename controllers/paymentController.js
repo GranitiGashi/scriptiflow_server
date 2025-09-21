@@ -1,6 +1,8 @@
 const supabase = require('../config/supabaseClient');
+const supabaseAdmin = require('../config/supabaseAdmin');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { getUserFromRequest } = require('../utils/authUser');
+const { sendEmail } = require('../utils/email');
 
 
 exports.savePaymentMethod = async (req, res) => {
@@ -459,4 +461,106 @@ exports.createSetupIntent = async (req, res) => {
         console.error('createSetupIntent error:', err);
         res.status(500).json({ error: 'Failed to create setup intent' });
     }
+};
+
+// Create checkout session (public, unauthenticated). Creates Stripe Session with plan and customer email.
+exports.createCheckoutSession = async (req, res) => {
+    try {
+        const { plan, email, full_name, company_name } = req.body || {};
+        if (!email || !plan) return res.status(400).json({ error: 'Missing email or plan' });
+
+        const priceMap = {
+            basic: process.env.STRIPE_PRICE_BASIC,
+            pro: process.env.STRIPE_PRICE_PRO,
+            premium: process.env.STRIPE_PRICE_PREMIUM,
+        };
+        const price = priceMap[plan];
+        if (!price) return res.status(400).json({ error: 'Invalid plan' });
+
+        // Create/lookup customer by email if you wish; here Stripe will auto-create
+        const session = await stripe.checkout.sessions.create({
+            mode: 'subscription',
+            payment_method_types: ['card'],
+            customer_email: email,
+            line_items: [{ price, quantity: 1 }],
+            success_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login?status=success`,
+            cancel_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/pricing?status=cancelled`,
+            metadata: {
+                plan,
+                email,
+                full_name: full_name || '',
+                company_name: company_name || '',
+            },
+        });
+
+        return res.json({ url: session.url });
+    } catch (err) {
+        console.error('createCheckoutSession error:', err);
+        return res.status(500).json({ error: 'Failed to create checkout session' });
+    }
+};
+
+// Stripe webhook: on successful checkout, create Supabase user, set tier, send invite
+exports.stripeWebhook = async (req, res) => {
+    const sig = req.headers['stripe-signature'];
+    let event;
+    try {
+        event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+    } catch (err) {
+        console.error('Webhook signature verification failed.', err.message);
+        return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+
+    try {
+        if (event.type === 'checkout.session.completed') {
+            const session = event.data.object;
+            const email = session.customer_details?.email || session.metadata?.email;
+            const plan = session.metadata?.plan || 'basic';
+            const full_name = session.metadata?.full_name || null;
+            const company_name = session.metadata?.company_name || null;
+
+            if (!email) {
+                console.warn('No email on checkout.session.completed');
+            } else {
+                // Generate invite link; upsert users_app with chosen tier
+                const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+                    type: 'invite',
+                    email,
+                    options: { redirectTo: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/auth/new-password?mode=invite` },
+                });
+                if (linkError) {
+                    console.error('generateLink error:', linkError.message);
+                } else {
+                    const invitedUserId = linkData?.user?.id;
+                    if (invitedUserId) {
+                        await supabaseAdmin
+                            .from('users_app')
+                            .upsert({
+                                id: invitedUserId,
+                                email,
+                                full_name,
+                                company_name,
+                                role: 'client',
+                                permissions: { tier: plan },
+                            });
+                    }
+
+                    // Email the action link using template
+                    try {
+                        const actionLink = linkData?.properties?.action_link;
+                        const { renderInviteEmail } = require('../utils/emailTemplates/invite');
+                        const html = renderInviteEmail({ actionLink, recipientName: full_name });
+                        await sendEmail({ to: email, subject: 'Willkommen bei ScriptiFlow', text: `Setzen Sie Ihr Passwort: ${actionLink}`, html });
+                    } catch (e) {
+                        console.log('invite email send failed:', e?.message || e);
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        console.error('stripeWebhook error:', e);
+        return res.status(500).send('Webhook handler failed');
+    }
+
+    res.json({ received: true });
 };

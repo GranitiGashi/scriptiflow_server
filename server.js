@@ -9,12 +9,16 @@ const adsRoutes = require('./routes/adsRoutes');
 const appsRoutes = require('./routes/appsRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const supportRoutes = require('./routes/supportRoutes');
+const paymentController = require('./controllers/paymentController');
 
 
 const app = express();
 // Disable ETag to avoid 304 on dynamic API responses
 app.set('etag', false);
 app.use(cors());
+// Stripe webhook must be defined before express.json so body isn't parsed
+const paymentController = require('./controllers/paymentController');
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), paymentController.stripeWebhook);
 app.use(express.json());
 // Ensure API responses are not cached by intermediaries/browsers
 app.use((req, res, next) => {
@@ -24,6 +28,9 @@ app.use((req, res, next) => {
   res.set('Vary', 'Authorization');
   next();
 });
+
+// Stripe webhook must use raw body for signature verification
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), paymentController.stripeWebhook);
 
 // Add request logging middleware
 app.use((req, res, next) => {
