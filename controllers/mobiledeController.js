@@ -2,36 +2,32 @@
 const supabase = require('../config/supabaseClient');
 const { getUserFromRequest } = require('../utils/authUser');
 const { encrypt, decrypt } = require('../utils/crypto');
-const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+const axios = require('axios');
 
 async function fetchMobileDeListings(username, password) {
-  const response = await fetch(`https://services.mobile.de/search-api/search`, {
-    method: 'GET',
-    headers: {
-      'Authorization': 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64'),
-      'Accept': 'application/json'
-    }
+  const auth = 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
+  const response = await axios.get('https://services.mobile.de/search-api/search', {
+    headers: { Authorization: auth, Accept: 'application/vnd.de.mobile.api+json' },
+    validateStatus: () => true,
   });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`mobile.de search failed: ${response.status} ${text}`);
+  if (response.status < 200 || response.status >= 300) {
+    const body = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+    throw new Error(`mobile.de search failed: ${response.status} ${body}`);
   }
-  return await response.json();
+  return response.data;
 }
 
 async function fetchMobileDeDetails(username, password, mobileAdId) {
-  const response = await fetch(`https://services.mobile.de/search-api/search/${encodeURIComponent(mobileAdId)}`, {
-    method: 'GET',
-    headers: {
-      'Authorization': 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64'),
-      'Accept': 'application/json'
-    }
+  const auth = 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
+  const response = await axios.get(`https://services.mobile.de/search-api/search/${encodeURIComponent(mobileAdId)}`, {
+    headers: { Authorization: auth, Accept: 'application/vnd.de.mobile.api+json' },
+    validateStatus: () => true,
   });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`mobile.de details failed: ${response.status} ${text}`);
+  if (response.status < 200 || response.status >= 300) {
+    const body = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+    throw new Error(`mobile.de details failed: ${response.status} ${body}`);
   }
-  return await response.json();
+  return response.data;
 }
 
 // controllers/mobiledeController.js
@@ -198,40 +194,37 @@ exports.deleteMobileCredentials = async (req, res) => {
 };
 
 exports.getUserCars = async (req, res) => {
-  const accessToken = req.headers.authorization?.split('Bearer ')[1];
-  const refreshToken = req.headers['x-refresh-token'];
+  try {
+    const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
+    const userId = authRes.user.id;
 
-  const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
-  if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
-  const user = authRes.user;
-  const sessionData = { user };
+    const credRes = await supabase
+      .from('mobile_de_credentials')
+      .select('username, encrypted_password')
+      .eq('user_id', userId)
+      .single();
 
-  const userId = sessionData.user.id;
-
-  const credRes = await supabase
-    .from('mobile_de_credentials')
-    .select('username, encrypted_password')
-    .eq('user_id', userId)
-    .single();
-
-  if (credRes.error || !credRes.data) {
-    return res.status(404).json({ error: 'No credentials found' });
-  }
-
-  const [iv, encryptedPassword] = credRes.data.encrypted_password.split(':');
-  const password = decrypt(encryptedPassword, iv);
-
-  // Call mobile.de API
-  const response = await fetch(`https://services.mobile.de/search-api/search`, {
-    method: 'GET',
-    headers: {
-      'Authorization': 'Basic ' + Buffer.from(`${credRes.data.username}:${password}`).toString('base64'),
-      'Accept': 'application/json'
+    if (credRes.error || !credRes.data) {
+      return res.status(404).json({ error: 'No credentials found' });
     }
-  });
 
-  const cars = await response.json();
-  res.json(cars);
+    const [iv, encryptedPassword] = credRes.data.encrypted_password.split(':');
+    const password = decrypt(encryptedPassword, iv);
+    const auth = 'Basic ' + Buffer.from(`${credRes.data.username}:${password}`).toString('base64');
+
+    const response = await axios.get('https://services.mobile.de/search-api/search', {
+      headers: { Authorization: auth, Accept: 'application/vnd.de.mobile.api+json' },
+      validateStatus: () => true,
+    });
+    if (response.status < 200 || response.status >= 300) {
+      return res.status(502).json({ error: 'mobile.de request failed', status: response.status, body: response.data });
+    }
+    return res.json(response.data);
+  } catch (err) {
+    console.error('getUserCars error:', err);
+    return res.status(500).json({ error: 'Failed to fetch cars', details: err.message });
+  }
 };
 
 // Get sync status and counts
