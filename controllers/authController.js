@@ -228,11 +228,13 @@ async function inviteUser(req, res) {
     try {
       const actionLink = linkData?.properties?.action_link;
       console.log('actionLink', actionLink);
+      const { renderInviteEmail } = require('../utils/emailTemplates/invite');
+      const html = renderInviteEmail({ actionLink, recipientName: full_name });
       await sendEmail({
         to: email,
         subject: 'You are invited to Scriptiflow',
         text: `Welcome to Scriptiflow! Set your password using this link: ${actionLink}`,
-        html: `<p>Welcome to Scriptiflow!</p><p>Please click the button below to set your password and complete your account setup.</p><p><a href="${actionLink}" style="display:inline-block;background:#3b82f6;color:#fff;padding:10px 14px;border-radius:6px;text-decoration:none;">Set your password</a></p>`
+        html,
       });
     } catch (e) {
       console.log('Invite email skipped/failed:', e?.message || e);
@@ -261,11 +263,13 @@ async function forgotPassword(req, res) {
     try {
       const actionLink = data?.properties?.action_link;
       console.log('actionLink', actionLink);
+      const { renderRecoveryEmail } = require('../utils/emailTemplates/recovery');
+      const html = renderRecoveryEmail({ actionLink });
       await sendEmail({
         to: email,
         subject: 'Reset your password',
         text: `Reset your password using this link: ${actionLink}`,
-        html: `<p>We received a request to reset your password.</p><p><a href="${actionLink}" style="display:inline-block;background:#3b82f6;color:#fff;padding:10px 14px;border-radius:6px;text-decoration:none;">Reset Password</a></p>`
+        html,
       });
     } catch (e) {
       console.log('Recovery email skipped/failed:', e?.message || e);
