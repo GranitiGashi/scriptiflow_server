@@ -1,0 +1,53 @@
+-- -- Email Integration Schema (Gmail + Outlook)
+
+-- -- Credentials per dealership (user)
+-- create table if not exists public.email_credentials (
+--   id uuid primary key default gen_random_uuid(),
+--   user_id uuid not null references public.users_app(id) on delete cascade,
+--   provider text not null check (provider in ('gmail','outlook')),
+--   account_email text,
+--   access_token_encrypted text,
+--   access_token_iv text,
+--   refresh_token_encrypted text,
+--   refresh_token_iv text,
+--   expires_at timestamptz,
+--   connected_at timestamptz,
+--   created_at timestamptz not null default now(),
+--   updated_at timestamptz not null default now()
+-- );
+-- create unique index if not exists idx_email_credentials_user_provider on public.email_credentials(user_id, provider);
+-- alter table public.email_credentials enable row level security;
+-- drop policy if exists "Users manage own email credentials" on public.email_credentials;
+-- create policy "Users manage own email credentials" on public.email_credentials for all using (user_id = auth.uid());
+
+-- -- Detected leads table
+-- create table if not exists public.email_leads (
+--   id uuid primary key default gen_random_uuid(),
+--   user_id uuid not null references public.users_app(id) on delete cascade,
+--   provider text not null check (provider in ('gmail','outlook')),
+--   thread_id text,
+--   message_id text,
+--   from_email text,
+--   from_name text,
+--   subject text,
+--   snippet text,
+--   body text,
+--   received_at timestamptz,
+--   is_car_related boolean default false,
+--   customer_name text,
+--   customer_email text,
+--   customer_phone text,
+--   car_model text,
+--   car_year text,
+--   car_price text,
+--   listing_link text,
+--   contact_id uuid references public.crm_contacts(id) on delete set null,
+--   created_at timestamptz not null default now()
+-- );
+-- create index if not exists idx_email_leads_user_time on public.email_leads(user_id, received_at desc);
+-- create unique index if not exists idx_email_leads_unique on public.email_leads(user_id, message_id);
+-- alter table public.email_leads enable row level security;
+-- drop policy if exists "Users manage own email leads" on public.email_leads;
+-- create policy "Users manage own email leads" on public.email_leads for all using (user_id = auth.uid());
+
+
