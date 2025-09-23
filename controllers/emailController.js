@@ -52,6 +52,19 @@ function htmlToText(html) {
   }
 }
 
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function decodeGmailBody(data) {
+  return data ? Buffer.from(data.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8') : '';
+}
+
 const MARKETPLACE_DOMAINS = ['mobile.de', 'autoscout24', 'autoscout24.de', 'kleinanzeigen.de', 'ebay-kleinanzeigen.de', 'carwow', 'heycar', 'autohero', 'wirkaufendeinauto'];
 const CAR_MAKES = [
   'audi','bmw','mercedes','mercedes-benz','vw','volkswagen','porsche','opel','ford','skoda','seat','renault','peugeot','citroen','dacia','fiat','alfa romeo','toyota','lexus','nissan','mazda','honda','hyundai','kia','volvo','mini','jaguar','land rover','tesla','cupra','ssangyong','suzuki','subaru','mitsubishi'
@@ -490,7 +503,7 @@ exports.listLeads = async (req, res) => {
     const user = authRes.user;
     const { data, error } = await supabase
       .from('email_leads')
-      .select('id, provider, from_email, from_name, subject, snippet, received_at, customer_name, car_model, car_year, car_price, listing_link, thread_id, message_id')
+      .select('id, provider, from_email, from_name, subject, snippet, body, received_at, customer_name, car_model, car_year, car_price, listing_link, thread_id, message_id')
       .eq('user_id', user.id)
       .order('received_at', { ascending: false })
       .limit(200);
@@ -582,17 +595,26 @@ async function fetchGmail(userId) {
       const from = getH('from');
       const subject = getH('subject');
       const date = getH('date');
-      let body = '';
-      function extract(part) {
+      // Prefer HTML body when available
+      function extractHtml(part) {
         if (!part) return '';
-        if (part.parts && part.parts.length) return part.parts.map(extract).join('\n');
-        const data = part.body?.data ? Buffer.from(part.body.data.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8') : '';
+        if (part.parts && part.parts.length) return part.parts.map(extractHtml).join('');
+        const data = decodeGmailBody(part.body?.data || '');
+        if ((part.mimeType || '').includes('text/html')) return data;
+        if ((part.mimeType || '').includes('text/plain')) return `<pre>${escapeHtml(data)}</pre>`;
+        return '';
+      }
+      function extractText(part) {
+        if (!part) return '';
+        if (part.parts && part.parts.length) return part.parts.map(extractText).join('\n');
+        const data = decodeGmailBody(part.body?.data || '');
         if ((part.mimeType || '').includes('text/html')) return htmlToText(data);
         return data || '';
       }
-      body = extract(msg.data?.payload) || msg.data?.snippet || '';
+      const bodyHtml = extractHtml(msg.data?.payload) || (extractText(msg.data?.payload) ? `<pre>${escapeHtml(extractText(msg.data?.payload))}</pre>` : '');
+      const bodyText = extractText(msg.data?.payload) || msg.data?.snippet || '';
       const snippet = msg.data?.snippet || (body ? body.slice(0, 180) : '');
-      if (isCarRelatedEmail({ from, subject, body })) {
+      if (isCarRelatedEmail({ from, subject, body: bodyText })) {
         await saveLead({
           userId,
           provider: 'gmail',
@@ -601,7 +623,7 @@ async function fetchGmail(userId) {
           from,
           subject,
           snippet,
-          body,
+          body: bodyHtml || bodyText,
           receivedAt: date ? new Date(date).toISOString() : new Date().toISOString(),
         });
         processed += 1;
@@ -643,7 +665,7 @@ async function fetchOutlook(userId) {
           from: `${fromName} <${fromEmail}>`,
           subject,
           snippet: (it.bodyPreview || '').slice(0, 200),
-          body: bodyText,
+          body: bodyHtml || bodyText,
           receivedAt: it.receivedDateTime || new Date().toISOString(),
         });
         processed += 1;
