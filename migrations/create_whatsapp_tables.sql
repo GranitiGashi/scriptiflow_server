@@ -1,0 +1,83 @@
+-- -- WhatsApp Integration Schema
+-- -- Credentials per dealership (user)
+-- create table if not exists public.whatsapp_credentials (
+--   id uuid primary key default gen_random_uuid(),
+--   user_id uuid not null references public.users_app(id) on delete cascade,
+--   waba_phone_number_id text not null,
+--   waba_business_account_id text,
+--   access_token_encrypted text not null,
+--   created_at timestamptz not null default now(),
+--   updated_at timestamptz not null default now(),
+--   connected_at timestamptz
+-- );
+
+-- create unique index if not exists idx_whatsapp_credentials_user on public.whatsapp_credentials(user_id);
+-- alter table public.whatsapp_credentials enable row level security;
+-- drop policy if exists "Users manage own whatsapp credentials" on public.whatsapp_credentials;
+-- create policy "Users manage own whatsapp credentials" on public.whatsapp_credentials
+--   for all using (user_id = auth.uid());
+
+-- -- Universal Contacts (per dealership), spanning WhatsApp, FB/IG, Email, etc.
+-- create table if not exists public.crm_contacts (
+--   id uuid primary key default gen_random_uuid(),
+--   user_id uuid not null references public.users_app(id) on delete cascade,
+--   first_name text,
+--   last_name text,
+--   email text,
+--   phone text,
+--   chat_link text,
+--   car_link text,
+--   source text default 'whatsapp',
+--   created_at timestamptz not null default now(),
+--   updated_at timestamptz not null default now()
+-- );
+-- create index if not exists idx_crm_contacts_user_phone on public.crm_contacts(user_id, phone);
+-- create index if not exists idx_crm_contacts_user_email on public.crm_contacts(user_id, email);
+-- alter table public.crm_contacts enable row level security;
+-- drop policy if exists "Users manage own crm contacts" on public.crm_contacts;
+-- create policy "Users manage own crm contacts" on public.crm_contacts
+--   for all using (user_id = auth.uid());
+
+-- -- Conversations (per dealership per contact)
+-- create table if not exists public.whatsapp_conversations (
+--   id uuid primary key default gen_random_uuid(),
+--   user_id uuid not null references public.users_app(id) on delete cascade,
+--   contact_id uuid not null references public.crm_contacts(id) on delete cascade,
+--   tag text check (tag in ('Lead','Customer','Sold','Spam')),
+--   last_message_at timestamptz,
+--   unread_count integer default 0,
+--   created_at timestamptz not null default now(),
+--   updated_at timestamptz not null default now()
+-- );
+-- create index if not exists idx_whatsapp_conversations_user on public.whatsapp_conversations(user_id, last_message_at desc);
+-- alter table public.whatsapp_conversations enable row level security;
+-- drop policy if exists "Users manage own whatsapp conversations" on public.whatsapp_conversations;
+-- create policy "Users manage own whatsapp conversations" on public.whatsapp_conversations
+--   for all using (user_id = auth.uid());
+
+-- -- Messages
+-- create table if not exists public.whatsapp_messages (
+--   id uuid primary key default gen_random_uuid(),
+--   user_id uuid not null references public.users_app(id) on delete cascade,
+--   conversation_id uuid not null references public.whatsapp_conversations(id) on delete cascade,
+--   direction text not null check (direction in ('inbound','outbound')),
+--   whatsapp_message_id text,
+--   body text,
+--   media jsonb,
+--   is_car_related boolean default false,
+--   matched_car_mobile_de_id text,
+--   created_at timestamptz not null default now()
+-- );
+-- create index if not exists idx_whatsapp_messages_conversation on public.whatsapp_messages(conversation_id, created_at);
+-- alter table public.whatsapp_messages enable row level security;
+-- drop policy if exists "Users view own whatsapp messages" on public.whatsapp_messages;
+-- create policy "Users view own whatsapp messages" on public.whatsapp_messages
+--   for select using (user_id = auth.uid());
+-- drop policy if exists "Users insert own whatsapp messages" on public.whatsapp_messages;
+-- create policy "Users insert own whatsapp messages" on public.whatsapp_messages
+--   for insert with check (user_id = auth.uid());
+
+-- -- Realtime enable (optional comments used by some tools)
+-- -- comment on table public.whatsapp_messages is 'realtime';
+
+

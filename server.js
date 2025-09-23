@@ -9,6 +9,7 @@ const adsRoutes = require('./routes/adsRoutes');
 const appsRoutes = require('./routes/appsRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const supportRoutes = require('./routes/supportRoutes');
+const whatsappRoutes = require('./routes/whatsappRoutes');
 const paymentController = require('./controllers/paymentController');
 
 
@@ -54,6 +55,7 @@ app.use('/api', adsRoutes);
 app.use('/api', appsRoutes);
 app.use('/api', adminRoutes);
 app.use('/api', supportRoutes);
+app.use('/api', whatsappRoutes);
 
 const PORT = process.env.PORT || 8081;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
