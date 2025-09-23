@@ -98,20 +98,38 @@ exports.listPhoneNumbers = async (req, res) => {
     const fbUserToken = tokenRow?.access_token;
     if (!fbUserToken) return res.status(400).json({ error: 'Facebook not connected' });
 
-    // list WhatsApp business accounts
-    const wbas = await axios.get('https://graph.facebook.com/v19.0/me/owned_whatsapp_business_accounts', {
+    // list WhatsApp business accounts (try standard edge first)
+    let accounts = [];
+    let wbaResp = await axios.get('https://graph.facebook.com/v19.0/me/whatsapp_business_accounts', {
       params: { access_token: fbUserToken, fields: 'id,name' },
       validateStatus: () => true,
     });
-    if (wbas.status !== 200) return res.status(502).json({ error: 'Failed to list WABAs', details: wbas.data });
+    if (wbaResp.status !== 200) {
+      // Fallback older/alternative edge
+      wbaResp = await axios.get('https://graph.facebook.com/v19.0/me/owned_whatsapp_business_accounts', {
+        params: { access_token: fbUserToken, fields: 'id,name' },
+        validateStatus: () => true,
+      });
+    }
+    if (wbaResp.status !== 200) {
+      return res.status(502).json({ error: 'Failed to list WABAs', status: wbaResp.status, details: wbaResp.data });
+    }
 
-    const accounts = Array.isArray(wbas.data?.data) ? wbas.data.data : [];
+    accounts = Array.isArray(wbaResp.data?.data) ? wbaResp.data.data : [];
     const allNumbers = [];
     for (const acc of accounts) {
-      const nums = await axios.get(`https://graph.facebook.com/v19.0/${acc.id}/phone_numbers`, {
+      // Primary edge
+      let nums = await axios.get(`https://graph.facebook.com/v19.0/${acc.id}/phone_numbers`, {
         params: { access_token: fbUserToken, fields: 'id,display_phone_number,verified_name' },
         validateStatus: () => true,
       });
+      if (nums.status !== 200) {
+        // Some accounts require business_phone_numbers edge
+        nums = await axios.get(`https://graph.facebook.com/v19.0/${acc.id}/business_phone_numbers`, {
+          params: { access_token: fbUserToken, fields: 'id,display_phone_number,verified_name' },
+          validateStatus: () => true,
+        });
+      }
       if (nums.status === 200 && Array.isArray(nums.data?.data)) {
         for (const n of nums.data.data) {
           allNumbers.push({
