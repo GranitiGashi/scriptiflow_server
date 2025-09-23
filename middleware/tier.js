@@ -9,7 +9,7 @@ function compareTier(current, required) {
   return c >= r;
 }
 
-async function requireTierOrAbove(required) {
+function requireTierOrAbove(required) {
   return async (req, res, next) => {
     try {
       const user = req.authUser;
