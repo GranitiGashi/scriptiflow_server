@@ -52,16 +52,71 @@ function htmlToText(html) {
   }
 }
 
-function isCarRelatedEmail({ from, subject, body }) {
+const MARKETPLACE_DOMAINS = ['mobile.de', 'autoscout24', 'autoscout24.de', 'kleinanzeigen.de', 'ebay-kleinanzeigen.de', 'carwow', 'heycar', 'autohero', 'wirkaufendeinauto'];
+const CAR_MAKES = [
+  'audi','bmw','mercedes','mercedes-benz','vw','volkswagen','porsche','opel','ford','skoda','seat','renault','peugeot','citroen','dacia','fiat','alfa romeo','toyota','lexus','nissan','mazda','honda','hyundai','kia','volvo','mini','jaguar','land rover','tesla','cupra','ssangyong','suzuki','subaru','mitsubishi'
+];
+const SUBJECT_KEYWORDS = ['anfrage','fahrzeug','auto','probefahrt','test drive','angebot','inquiry','vehicle','vin','fahrgestell'];
+const BODY_KEYWORDS = ['fahrzeug','modell','modelljahr','baujahr','vin','fahrgestell','probefahrt','anfrage','angebot','ez','kilometer','km','ps','kw','preis','price'];
+
+function detectSource({ from, body, listingLink }) {
+  const hayFrom = (from || '').toLowerCase();
+  const hayBody = (body || '').toLowerCase();
+  const link = (listingLink || '').toLowerCase();
+  const hay = hayFrom + ' ' + hayBody + ' ' + link;
+  if (hay.includes('mobile.de')) return 'mobilede';
+  if (hay.includes('autoscout24')) return 'autoscout24';
+  if (hay.includes('kleinanzeigen')) return 'kleinanzeigen';
+  if (hay.includes('carwow')) return 'carwow';
+  return null;
+}
+
+function findListingLink(text) {
+  if (!text) return null;
+  const m = String(text).match(/https?:\/\/[\w.-]+\.[\w.-]+[^\s)\]]+/);
+  if (!m) return null;
+  const url = m[0];
+  // Prefer known marketplaces
+  for (const d of MARKETPLACE_DOMAINS) {
+    if (url.toLowerCase().includes(d)) return url;
+  }
+  return url;
+}
+
+function scoreCarLead({ from, subject, body }) {
+  let score = 0;
+  const reasons = [];
   const sender = (from || '').toLowerCase();
   const subj = (subject || '').toLowerCase();
   const text = (body || '').toLowerCase();
-  const senderKeywords = ['mobile.de', 'autoscout24', 'kleinanzeigen.de', 'auto', 'carwow'];
-  const wordKeywords = ['car', 'vehicle', 'auto', 'test drive', 'probefahrt', 'vin', 'fahrgestell', 'offer', 'inquiry', 'angebot', 'anfrage'];
-  if (senderKeywords.some((d) => sender.includes(d))) return true;
-  if (wordKeywords.some((w) => subj.includes(w))) return true;
-  if (wordKeywords.some((w) => text.includes(w))) return true;
-  return false;
+
+  if (MARKETPLACE_DOMAINS.some((d) => sender.includes(d))) { score += 5; reasons.push('marketplace-domain'); }
+  const subjHits = SUBJECT_KEYWORDS.filter((w) => subj.includes(w)).length;
+  if (subjHits) { score += 2 * subjHits; reasons.push('subject-keywords'); }
+  const bodyHits = BODY_KEYWORDS.filter((w) => text.includes(w)).length;
+  if (bodyHits) { score += 1 * Math.min(bodyHits, 5); reasons.push('body-keywords'); }
+
+  // VIN pattern
+  if (/[A-HJ-NPR-Z0-9]{17}/i.test(text)) { score += 4; reasons.push('vin'); }
+  // Year/Baujahr
+  if (/(baujahr|year|ez)\s*[:\-]?\s*(19|20)\d{2}/i.test(text)) { score += 2; reasons.push('year'); }
+  // Make mentioned
+  if (CAR_MAKES.some((m) => text.includes(m))) { score += 2; reasons.push('make'); }
+  // Price-like
+  if (/(preis|price)\s*[:\-]?\s*[\d\.,]{3,}\s*(€|eur)?/i.test(text)) { score += 2; reasons.push('price'); }
+  // Probefahrt/Test Drive
+  if (/(probefahrt|test drive)/i.test(text)) { score += 2; reasons.push('testdrive'); }
+
+  // Negative signals
+  if (/(newsletter|rechnung|invoice|receipt|newsletter)/i.test(text) || /(no-?reply)/i.test(sender)) { score -= 3; reasons.push('negative'); }
+
+  const threshold = 5;
+  return { isLead: score >= threshold, score, reasons };
+}
+
+function isCarRelatedEmail({ from, subject, body }) {
+  const { isLead } = scoreCarLead({ from, subject, body });
+  return isLead;
 }
 
 function parseLeadFromEmail({ body, subject, from }) {
@@ -100,8 +155,8 @@ function parseLeadFromEmail({ body, subject, from }) {
   if (yearMatch) result.car_year = yearMatch[1];
   const priceMatch = text.match(/(?:Price|Preis)\s*[:\-]\s*([\d,.]+)\s*(?:EUR|€)?/i);
   if (priceMatch) result.car_price = priceMatch[1].replace(/[,]/g, '.');
-  const linkMatch = text.match(/https?:\/\/[\w.-]+\.[\w.-]+[^\s)\]]+/);
-  if (linkMatch) result.listing_link = linkMatch[0];
+  const link = findListingLink(text);
+  if (link) result.listing_link = link;
   return result;
 }
 
