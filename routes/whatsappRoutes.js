@@ -8,6 +8,7 @@ const { requireTierOrAbove } = require('../middleware/tier');
 router.post('/whatsapp/connect', requireSupabaseAuth, (req, res, next) => requireTierOrAbove('pro')(req, res, next), controller.connectWhatsApp);
 router.get('/whatsapp/credentials', requireSupabaseAuth, controller.getCredentials);
 router.delete('/whatsapp/credentials', requireSupabaseAuth, controller.disconnect);
+router.get('/whatsapp/phone-numbers', requireSupabaseAuth, controller.listPhoneNumbers);
 
 // Webhook (public)
 router.get('/whatsapp/webhook', controller.webhookVerify);

@@ -54,6 +54,9 @@ exports.getFbLoginUrl = async (req, res) => {
           'instagram_basic',           // Basic Instagram access
           'instagram_content_publish', // Post to Instagram
           'instagram_manage_insights', // Instagram insights
+          // WhatsApp onboarding and messaging
+          'whatsapp_business_management',
+          'whatsapp_business_messaging',
           // Note: Removed ads_management, ads_read, business_management
           // These are not needed since we use OUR ad accounts
         ].join(','),

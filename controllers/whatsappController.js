@@ -2,6 +2,7 @@ const supabase = require('../config/supabaseClient');
 const supabaseAdmin = require('../config/supabaseAdmin');
 const { getUserFromRequest } = require('../utils/authUser');
 const axios = require('axios');
+const { getFacebookUserToken } = require('../models/socialTokenModel');
 
 function normalizePhone(phone) {
   return (phone || '').replace(/\D+/g, '');
@@ -44,8 +45,8 @@ exports.connectWhatsApp = async (req, res) => {
     if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
     const user = authRes.user;
     const { waba_phone_number_id, waba_business_account_id, access_token } = req.body || {};
-    if (!waba_phone_number_id || !access_token) {
-      return res.status(400).json({ error: 'waba_phone_number_id and access_token required' });
+    if (!waba_phone_number_id && !access_token) {
+      return res.status(400).json({ error: 'Provide phone_number_id or use auto onboarding' });
     }
 
     // Store credentials encrypted at app level; you commented schema creation; assuming table exists or will be added later
@@ -82,6 +83,49 @@ exports.getCredentials = async (req, res) => {
     return res.json(data);
   } catch (err) {
     return res.status(500).json({ error: err.message || 'Server error' });
+  }
+};
+
+// Auto-discover numbers via FB user token
+exports.listPhoneNumbers = async (req, res) => {
+  try {
+    const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
+    const user = authRes.user;
+
+    // get long-lived facebook user token
+    const tokenRow = await getFacebookUserToken(user.id);
+    const fbUserToken = tokenRow?.access_token;
+    if (!fbUserToken) return res.status(400).json({ error: 'Facebook not connected' });
+
+    // list WhatsApp business accounts
+    const wbas = await axios.get('https://graph.facebook.com/v19.0/me/owned_whatsapp_business_accounts', {
+      params: { access_token: fbUserToken, fields: 'id,name' },
+      validateStatus: () => true,
+    });
+    if (wbas.status !== 200) return res.status(502).json({ error: 'Failed to list WABAs', details: wbas.data });
+
+    const accounts = Array.isArray(wbas.data?.data) ? wbas.data.data : [];
+    const allNumbers = [];
+    for (const acc of accounts) {
+      const nums = await axios.get(`https://graph.facebook.com/v19.0/${acc.id}/phone_numbers`, {
+        params: { access_token: fbUserToken, fields: 'id,display_phone_number,verified_name' },
+        validateStatus: () => true,
+      });
+      if (nums.status === 200 && Array.isArray(nums.data?.data)) {
+        for (const n of nums.data.data) {
+          allNumbers.push({
+            waba_business_account_id: acc.id,
+            phone_number_id: n.id,
+            display_phone_number: n.display_phone_number,
+            verified_name: n.verified_name || null,
+          });
+        }
+      }
+    }
+    return res.json(allNumbers);
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Failed to list phone numbers' });
   }
 };
 
@@ -231,6 +275,14 @@ exports.sendMessage = async (req, res) => {
       .single();
     if (!cred) return res.status(400).json({ error: 'WhatsApp not connected' });
 
+    // Choose access token: stored WhatsApp token or fallback to Facebook user token
+    let bearer = cred.access_token_encrypted;
+    if (!bearer || bearer === 'fb_token_managed') {
+      const tokenRow = await getFacebookUserToken(user.id);
+      bearer = tokenRow?.access_token;
+    }
+    if (!bearer) return res.status(400).json({ error: 'Missing access token. Connect via Facebook or provide a WhatsApp token.' });
+
     const url = `https://graph.facebook.com/v19.0/${cred.waba_phone_number_id}/messages`;
     await axios.post(url, {
       messaging_product: 'whatsapp',
@@ -238,7 +290,7 @@ exports.sendMessage = async (req, res) => {
       type: 'text',
       text: { body: message }
     }, {
-      headers: { Authorization: `Bearer ${cred.access_token_encrypted}` },
+      headers: { Authorization: `Bearer ${bearer}` },
       validateStatus: () => true,
     });
 
