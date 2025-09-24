@@ -85,4 +85,79 @@ exports.bulkDelete = async (req, res) => {
   }
 };
 
+exports.getDetail = async (req, res) => {
+  try {
+    const auth = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (auth.error) return res.status(auth.error.status || 401).json({ error: auth.error.message });
+    const user = auth.user;
+    const { id } = req.params;
+    // Contact core
+    const { data: contact } = await supabase
+      .from('crm_contacts')
+      .select('id, first_name, last_name, email, phone, source, created_at')
+      .eq('user_id', user.id)
+      .eq('id', id)
+      .maybeSingle();
+    if (!contact) return res.status(404).json({ error: 'Contact not found' });
+    // Notes
+    const { data: notes } = await supabase
+      .from('contact_notes')
+      .select('id, body, created_at')
+      .eq('user_id', user.id)
+      .eq('contact_id', id)
+      .order('created_at', { ascending: false });
+    // Upcoming + history events
+    const now = new Date().toISOString();
+    const { data: upcoming } = await supabase
+      .from('calendar_events')
+      .select('id, title, start_time, end_time, car_mobile_de_id')
+      .eq('user_id', user.id)
+      .eq('contact_id', id)
+      .is('deleted_at', null)
+      .gte('start_time', now)
+      .order('start_time', { ascending: true })
+      .limit(10);
+    const { data: history } = await supabase
+      .from('calendar_events')
+      .select('id, title, start_time, end_time, car_mobile_de_id')
+      .eq('user_id', user.id)
+      .eq('contact_id', id)
+      .is('deleted_at', null)
+      .lt('start_time', now)
+      .order('start_time', { ascending: false })
+      .limit(20);
+    // Email threads (basic by from_email match)
+    let emails = [];
+    if (contact.email) {
+      const { data } = await supabase
+        .from('email_leads')
+        .select('id, provider, subject, snippet, received_at, thread_id')
+        .eq('user_id', user.id)
+        .ilike('from_email', `%${contact.email}%`)
+        .order('received_at', { ascending: false })
+        .limit(50);
+      emails = data || [];
+    }
+    return res.json({ contact, notes: notes || [], upcoming: upcoming || [], history: history || [], emails });
+  } catch (e) {
+    return res.status(500).json({ error: e.message || 'Failed to load contact detail' });
+  }
+};
+
+exports.addNote = async (req, res) => {
+  try {
+    const auth = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (auth.error) return res.status(auth.error.status || 401).json({ error: auth.error.message });
+    const user = auth.user;
+    const { id } = req.params;
+    const { body } = req.body || {};
+    if (!body || !body.trim()) return res.status(400).json({ error: 'Note body required' });
+    const { error } = await supabaseAdmin.from('contact_notes').insert({ user_id: user.id, contact_id: id, body });
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ error: e.message || 'Failed to add note' });
+  }
+};
+
 
