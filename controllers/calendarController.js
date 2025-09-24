@@ -87,17 +87,49 @@ exports.listEvents = async (req, res) => {
   }
 };
 
+async function findOrCreateContact(userId, { name, email }) {
+  if (!email && !name) return null;
+  let contact = null;
+  if (email) {
+    const { data } = await supabase
+      .from('crm_contacts')
+      .select('id, first_name, last_name, email')
+      .eq('user_id', userId)
+      .eq('email', email)
+      .maybeSingle();
+    if (data) contact = data;
+  }
+  if (!contact) {
+    let firstName = null; let lastName = null;
+    if (name) {
+      const parts = String(name).trim().split(/\s+/);
+      firstName = parts[0] || null; lastName = parts.slice(1).join(' ') || null;
+    }
+    const { data: created } = await supabaseAdmin
+      .from('crm_contacts')
+      .insert({ user_id: userId, first_name: firstName, last_name: lastName, email, source: 'calendar' })
+      .select('id')
+      .single();
+    return created?.id || null;
+  }
+  return contact.id;
+}
+
 exports.createEvent = async (req, res) => {
   try {
     const auth = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
     if (auth.error) return res.status(auth.error.status || 401).json({ error: auth.error.message });
     const user = auth.user;
-    const { title, description, location, start_time, end_time, car_mobile_de_id, contact_id } = req.body || {};
+    const { title, description, location, start_time, end_time, car_mobile_de_id, contact_id, customer_name, customer_email } = req.body || {};
     if (!title || !start_time || !end_time) return res.status(400).json({ error: 'title, start_time, end_time required' });
     const cal = await getAuthedCalendar(user.id);
     const g = await cal.events.insert({ calendarId: 'primary', requestBody: { summary: title, description, location, start: { dateTime: start_time }, end: { dateTime: end_time } } });
     const google_event_id = g.data.id;
-    const { data: created, error } = await supabaseAdmin.from('calendar_events').insert({ user_id: user.id, google_event_id, calendar_id: 'primary', title, description, location, start_time, end_time, car_mobile_de_id: car_mobile_de_id || null, contact_id: contact_id || null }).select('id').single();
+    let finalContactId = contact_id || null;
+    if (!finalContactId && (customer_email || customer_name)) {
+      finalContactId = await findOrCreateContact(user.id, { name: customer_name || null, email: customer_email || null });
+    }
+    const { data: created, error } = await supabaseAdmin.from('calendar_events').insert({ user_id: user.id, google_event_id, calendar_id: 'primary', title, description, location, start_time, end_time, car_mobile_de_id: car_mobile_de_id || null, contact_id: finalContactId || null }).select('id').single();
     if (error) return res.status(500).json({ error: error.message });
     return res.json({ id: created.id, google_event_id });
   } catch (e) {
@@ -111,12 +143,16 @@ exports.updateEvent = async (req, res) => {
     if (auth.error) return res.status(auth.error.status || 401).json({ error: auth.error.message });
     const user = auth.user;
     const { id } = req.params;
-    const { title, description, location, start_time, end_time, car_mobile_de_id, contact_id } = req.body || {};
+    const { title, description, location, start_time, end_time, car_mobile_de_id, contact_id, customer_name, customer_email } = req.body || {};
     const { data: row } = await supabase.from('calendar_events').select('google_event_id').eq('user_id', user.id).eq('id', id).maybeSingle();
     if (!row) return res.status(404).json({ error: 'Event not found' });
     const cal = await getAuthedCalendar(user.id);
     await cal.events.patch({ calendarId: 'primary', eventId: row.google_event_id, requestBody: { summary: title, description, location, start: { dateTime: start_time }, end: { dateTime: end_time } } });
-    const { error } = await supabaseAdmin.from('calendar_events').update({ title, description, location, start_time, end_time, car_mobile_de_id: car_mobile_de_id || null, contact_id: contact_id || null, updated_at: new Date().toISOString() }).eq('id', id).eq('user_id', user.id);
+    let finalContactId = contact_id || null;
+    if (!finalContactId && (customer_email || customer_name)) {
+      finalContactId = await findOrCreateContact(user.id, { name: customer_name || null, email: customer_email || null });
+    }
+    const { error } = await supabaseAdmin.from('calendar_events').update({ title, description, location, start_time, end_time, car_mobile_de_id: car_mobile_de_id || null, contact_id: finalContactId || null, updated_at: new Date().toISOString() }).eq('id', id).eq('user_id', user.id);
     if (error) return res.status(500).json({ error: error.message });
     return res.json({ ok: true });
   } catch (e) {
