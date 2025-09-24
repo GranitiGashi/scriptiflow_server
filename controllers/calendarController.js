@@ -140,7 +140,11 @@ exports.createEvent = async (req, res) => {
     const { title, description, location, start_time, end_time, car_mobile_de_id, contact_id, customer_name, customer_email } = req.body || {};
     if (!title || !start_time || !end_time) return res.status(400).json({ error: 'title, start_time, end_time required' });
     const cal = await getAuthedCalendar(user.id);
-    const g = await cal.events.insert({ calendarId: 'primary', requestBody: { summary: title, description, location, start: { dateTime: start_time }, end: { dateTime: end_time } } });
+    const requestBody = { summary: title, description, location, start: { dateTime: start_time }, end: { dateTime: end_time } };
+    if (customer_email) {
+      requestBody.attendees = [{ email: customer_email, displayName: customer_name || undefined }];
+    }
+    const g = await cal.events.insert({ calendarId: 'primary', requestBody });
     const google_event_id = g.data.id;
     let finalContactId = contact_id || null;
     if (!finalContactId && (customer_email || customer_name)) {
@@ -164,7 +168,11 @@ exports.updateEvent = async (req, res) => {
     const { data: row } = await supabase.from('calendar_events').select('google_event_id').eq('user_id', user.id).eq('id', id).maybeSingle();
     if (!row) return res.status(404).json({ error: 'Event not found' });
     const cal = await getAuthedCalendar(user.id);
-    await cal.events.patch({ calendarId: 'primary', eventId: row.google_event_id, requestBody: { summary: title, description, location, start: { dateTime: start_time }, end: { dateTime: end_time } } });
+    const requestBody = { summary: title, description, location, start: { dateTime: start_time }, end: { dateTime: end_time } };
+    if (customer_email) {
+      requestBody.attendees = [{ email: customer_email, displayName: customer_name || undefined }];
+    }
+    await cal.events.patch({ calendarId: 'primary', eventId: row.google_event_id, requestBody });
     let finalContactId = contact_id || null;
     if (!finalContactId && (customer_email || customer_name)) {
       finalContactId = await findOrCreateContact(user.id, { name: customer_name || null, email: customer_email || null });
