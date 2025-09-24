@@ -62,6 +62,22 @@ exports.listEvents = async (req, res) => {
       const start = ev.start?.dateTime || (ev.start?.date ? `${ev.start.date}T00:00:00Z` : null);
       const end = ev.end?.dateTime || (ev.end?.date ? `${ev.end.date}T00:00:00Z` : null);
       if (!start || !end) continue;
+      // Try to link to a contact by attendee/description email
+      let contactId = null;
+      let emailCandidate = null;
+      let nameCandidate = null;
+      if (Array.isArray(ev.attendees) && ev.attendees.length) {
+        const att = ev.attendees.find((a) => a.email && a.responseStatus !== 'declined') || ev.attendees[0];
+        emailCandidate = att?.email || null;
+        nameCandidate = att?.displayName || null;
+      }
+      if (!emailCandidate && typeof ev.description === 'string') {
+        const m = ev.description.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+        if (m) emailCandidate = m[0];
+      }
+      if (emailCandidate) {
+        try { contactId = await findOrCreateContact(user.id, { name: nameCandidate, email: emailCandidate }); } catch (_) {}
+      }
       await supabaseAdmin.from('calendar_events').upsert({
         user_id: user.id,
         google_event_id: ev.id,
@@ -71,6 +87,7 @@ exports.listEvents = async (req, res) => {
         location: ev.location || null,
         start_time: new Date(start).toISOString(),
         end_time: new Date(end).toISOString(),
+        contact_id: contactId || null,
       }, { onConflict: 'user_id,google_event_id' });
     }
 
