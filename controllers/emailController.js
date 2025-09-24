@@ -16,6 +16,7 @@ const GOOGLE_REDIRECT_URI = `https://${BASE_DOMAIN}/api/email/gmail/callback`;
 const GMAIL_SCOPES = [
   'https://www.googleapis.com/auth/gmail.modify',
   'https://www.googleapis.com/auth/gmail.send',
+  'https://www.googleapis.com/auth/calendar.events',
   'openid',
   'email',
   'profile',
