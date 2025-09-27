@@ -44,6 +44,11 @@ exports.uploadAssets = async (req, res) => {
     await supabaseAdmin
       .from('dealer_assets')
       .upsert({ user_id: userId, ...out, updated_at: new Date().toISOString() }, { onConflict: ['user_id'] });
+    // Also store on users_app for convenience
+    await supabaseAdmin
+      .from('users_app')
+      .update({ dealer_logo_url: out.dealer_logo_url, branded_template_url: out.branded_template_url, assets_updated_at: new Date().toISOString() })
+      .eq('id', userId);
 
     return res.json(out);
   } catch (err) {

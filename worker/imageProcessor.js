@@ -23,6 +23,22 @@ async function processJob(job) {
       removebgOptions.bg_color = removebgOptions.bg_color || 'ffffff';
       removebgOptions.format = removebgOptions.format || 'png';
     }
+    if (options?.background?.type === 'template') {
+      // use provided URL or account background as remove.bg bg_image_url
+      let templateUrl = options.background?.url || null;
+      if (!templateUrl) {
+        const { data: asset } = await supabase
+          .from('dealer_assets')
+          .select('branded_template_url')
+          .eq('user_id', job.user_id)
+          .maybeSingle();
+        templateUrl = asset?.branded_template_url || null;
+      }
+      if (templateUrl) {
+        removebgOptions.bg_image_url = templateUrl;
+        removebgOptions.format = removebgOptions.format || 'png';
+      }
+    }
     // If UI asked for white background, let removebg render it server-side
     // map basic UI size -> removebg size
     // if (options?.quality === 'preview') removebgOptions.size = 'preview';
@@ -55,20 +71,7 @@ async function processJob(job) {
       composed = await replaceBackground(cutout, bg);
     }
   } else if (options.background?.type === 'template') {
-    // use supplied url or fallback to account template
-    let templateUrl = options.background?.url || null;
-    if (!templateUrl) {
-      const { data: asset } = await supabase
-        .from('dealer_assets')
-        .select('branded_template_url')
-        .eq('user_id', job.user_id)
-        .maybeSingle();
-      templateUrl = asset?.branded_template_url || null;
-    }
-    if (templateUrl) {
-      const bgBuf = await fetchBufferFromUrl(templateUrl);
-      composed = await replaceBackground(cutout, bgBuf);
-    }
+    // Background was applied by remove.bg via bg_image_url; no manual compose needed
   } else if (options.background?.type === 'none' || !options.background) {
     // keep transparent PNG
   }

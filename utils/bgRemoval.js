@@ -37,6 +37,7 @@ async function removeBackgroundRemoveBg(imageBuffer, options = {}) {
     shadow_opacity,
     semitransparency,
     bg_color,
+    bg_image_url,
   } = options || {};
   if (size) fd.append('size', String(size));
   if (type) fd.append('type', String(type));
@@ -52,6 +53,7 @@ async function removeBackgroundRemoveBg(imageBuffer, options = {}) {
   if (typeof shadow_opacity !== 'undefined') fd.append('shadow_opacity', String(shadow_opacity));
   if (typeof semitransparency === 'boolean') fd.append('semitransparency', semitransparency ? 'true' : 'false');
   if (bg_color) fd.append('bg_color', String(bg_color).replace('#', ''));
+  if (bg_image_url) fd.append('bg_image_url', String(bg_image_url));
   const res = await axios.post('https://api.remove.bg/v1.0/removebg', fd, {
     headers: { ...fd.getHeaders(), 'X-Api-Key': key },
     responseType: 'arraybuffer',
