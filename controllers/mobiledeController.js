@@ -30,6 +30,134 @@ async function fetchMobileDeDetails(username, password, mobileAdId) {
   return response.data;
 }
 
+// In-memory guard to avoid concurrent syncs per user
+const inFlightMobileDeSyncByUser = new Map();
+
+// Perform a full sync for a specific user (used by explicit route and background refresh)
+async function performMobileDeSyncForUser(userId) {
+  const credRes = await supabase
+    .from('mobile_de_credentials')
+    .select('username, encrypted_password')
+    .eq('user_id', userId)
+    .single();
+  if (credRes.error || !credRes.data) {
+    return { synced: false, new_listings: 0, total_seen: 0, reason: 'no_credentials' };
+  }
+
+  const [iv, encryptedPassword] = credRes.data.encrypted_password.split(':');
+  const password = decrypt(encryptedPassword, iv);
+  const username = credRes.data.username;
+
+  // Fetch current listings
+  const searchData = await fetchMobileDeListings(username, password);
+  const ads = Array.isArray(searchData?.['search-result']?.ads?.ad)
+    ? searchData['search-result'].ads.ad
+    : [];
+
+  let newCount = 0;
+  for (const ad of ads) {
+    const mobileAdId = String(ad.id || ad.mobileAdId || ad['mobile-ad-id'] || '').trim();
+    if (!mobileAdId) continue;
+
+    // Upsert only if new
+    const { data: existing } = await supabase
+      .from('mobile_de_listings')
+      .select('mobile_ad_id')
+      .eq('user_id', userId)
+      .eq('mobile_ad_id', mobileAdId)
+      .maybeSingle();
+    if (existing) {
+      // Update last_seen
+      await supabase
+        .from('mobile_de_listings')
+        .update({ last_seen: new Date().toISOString() })
+        .eq('user_id', userId)
+        .eq('mobile_ad_id', mobileAdId);
+      continue;
+    }
+
+    // Fetch full details for new ad
+    let details = null;
+    let image_xxxl_url = null;
+    let imagesArr = [];
+    try {
+      details = await fetchMobileDeDetails(username, password, mobileAdId);
+      const imgs = Array.isArray(details?.images) ? details.images : [];
+      image_xxxl_url = imgs.find(i => i?.xxxl)?.xxxl || null;
+      imagesArr = imgs.map(i => i?.xxxl || i?.xxl || i?.xl || i?.l || i?.m || i?.s).filter(Boolean);
+    } catch (e) {
+      // Continue even if details fail; we still store the ad id
+    }
+
+    await supabase
+      .from('mobile_de_listings')
+      .insert({
+        user_id: userId,
+        mobile_ad_id: mobileAdId,
+        details,
+        image_xxxl_url,
+        images: imagesArr.length ? imagesArr : null,
+        first_seen: new Date().toISOString(),
+        last_seen: new Date().toISOString(),
+      });
+
+    // Enqueue social posts (facebook + instagram if linked)
+    const platforms = ['facebook', 'instagram'];
+    for (const platform of platforms) {
+      const caption = `${(details?.make || ad.make || '').toString()} ${(details?.model || ad.model || '').toString()}`.trim();
+      await supabase
+        .from('social_post_jobs')
+        .insert({
+          user_id: userId,
+          platform,
+          mobile_ad_id: mobileAdId,
+          payload: {
+            images: imagesArr.length ? imagesArr : (image_xxxl_url ? [image_xxxl_url] : []),
+            caption,
+            detail_url: details?.detailPageUrl || ad.detailPageUrl || null,
+          },
+        });
+    }
+    newCount += 1;
+  }
+
+  // Update last_sync_at
+  await supabase
+    .from('mobile_de_credentials')
+    .update({ last_sync_at: new Date().toISOString() })
+    .eq('user_id', userId);
+
+  return { synced: true, new_listings: newCount, total_seen: ads.length };
+}
+
+// Fire-and-forget background sync with minimal throttling
+async function maybeStartBackgroundSync(userId) {
+  if (inFlightMobileDeSyncByUser.has(userId)) return;
+  try {
+    const { data: cred } = await supabase
+      .from('mobile_de_credentials')
+      .select('last_sync_at')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    const last = cred?.last_sync_at ? new Date(cred.last_sync_at).getTime() : 0;
+    const now = Date.now();
+    const minIntervalMs = 60 * 1000; // throttle background sync to once per minute per user
+    if (now - last < minIntervalMs) return;
+
+    inFlightMobileDeSyncByUser.set(userId, true);
+    performMobileDeSyncForUser(userId)
+      .catch((err) => {
+        console.error('Background syncMobileDe failed:', err);
+      })
+      .finally(() => {
+        inFlightMobileDeSyncByUser.delete(userId);
+      });
+  } catch (err) {
+    // Ignore background scheduling errors
+  }
+}
+
 // controllers/mobiledeController.js
 exports.connectMobile = async (req, res) => {
   const { username, password } = req.body;
@@ -273,6 +401,9 @@ exports.getMobileDeListings = async (req, res) => {
     const userId = authRes.user.id;
     const limit = Math.min(parseInt(req.query.limit || '20', 10) || 20, 100);
 
+    // Trigger a background refresh without blocking the response
+    maybeStartBackgroundSync(userId);
+
     const { data, error } = await supabase
       .from('mobile_de_listings')
       .select('mobile_ad_id, first_seen, last_seen, details, image_xxxl_url, images')
@@ -340,100 +471,11 @@ exports.syncMobileDe = async (req, res) => {
     const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
     if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
     const userId = authRes.user.id;
-
-    const credRes = await supabase
-      .from('mobile_de_credentials')
-      .select('username, encrypted_password')
-      .eq('user_id', userId)
-      .single();
-    if (credRes.error || !credRes.data) {
+    const result = await performMobileDeSyncForUser(userId);
+    if (result.reason === 'no_credentials') {
       return res.status(404).json({ error: 'No mobile.de credentials found' });
     }
-    const [iv, encryptedPassword] = credRes.data.encrypted_password.split(':');
-    const password = decrypt(encryptedPassword, iv);
-    const username = credRes.data.username;
-
-    // Fetch current listings
-    const searchData = await fetchMobileDeListings(username, password);
-    const ads = Array.isArray(searchData?.['search-result']?.ads?.ad)
-      ? searchData['search-result'].ads.ad
-      : [];
-
-    let newCount = 0;
-    for (const ad of ads) {
-      const mobileAdId = String(ad.id || ad.mobileAdId || ad['mobile-ad-id'] || '').trim();
-      if (!mobileAdId) continue;
-
-      // Upsert only if new
-      const { data: existing } = await supabase
-        .from('mobile_de_listings')
-        .select('mobile_ad_id')
-        .eq('user_id', userId)
-        .eq('mobile_ad_id', mobileAdId)
-        .maybeSingle();
-      if (existing) {
-        // Update last_seen
-        await supabase
-          .from('mobile_de_listings')
-          .update({ last_seen: new Date().toISOString() })
-          .eq('user_id', userId)
-          .eq('mobile_ad_id', mobileAdId);
-        continue;
-      }
-
-      // Fetch full details for new ad
-      let details = null;
-      let image_xxxl_url = null;
-      let imagesArr = [];
-      try {
-        details = await fetchMobileDeDetails(username, password, mobileAdId);
-        const imgs = Array.isArray(details?.images) ? details.images : [];
-        // Always prefer xxxl as requested
-        image_xxxl_url = imgs.find(i => i?.xxxl)?.xxxl || null;
-        imagesArr = imgs.map(i => i?.xxxl || i?.xxl || i?.xl || i?.l || i?.m || i?.s).filter(Boolean);
-      } catch (e) {
-        // Continue even if details fail; we still store the ad id
-      }
-
-      await supabase
-        .from('mobile_de_listings')
-        .insert({
-          user_id: userId,
-          mobile_ad_id: mobileAdId,
-          details,
-          image_xxxl_url,
-          images: imagesArr.length ? imagesArr : null,
-          first_seen: new Date().toISOString(),
-          last_seen: new Date().toISOString(),
-        });
-
-      // Enqueue social posts (facebook + instagram if linked)
-      const platforms = ['facebook', 'instagram'];
-      for (const platform of platforms) {
-        const caption = `${(details?.make || ad.make || '').toString()} ${(details?.model || ad.model || '').toString()}`.trim();
-        await supabase
-          .from('social_post_jobs')
-          .insert({
-            user_id: userId,
-            platform,
-            mobile_ad_id: mobileAdId,
-            payload: {
-              images: imagesArr.length ? imagesArr : (image_xxxl_url ? [image_xxxl_url] : []),
-              caption,
-              detail_url: details?.detailPageUrl || ad.detailPageUrl || null,
-            },
-          });
-      }
-      newCount += 1;
-    }
-
-    // Update last_sync_at
-    await supabase
-      .from('mobile_de_credentials')
-      .update({ last_sync_at: new Date().toISOString() })
-      .eq('user_id', userId);
-
-    return res.json({ synced: true, new_listings: newCount, total_seen: ads.length });
+    return res.json(result);
   } catch (err) {
     console.error('syncMobileDe error:', err);
     return res.status(500).json({ error: 'Failed to sync mobile.de', details: err.message });
