@@ -11,7 +11,7 @@ exports.enqueueProcessing = async (req, res) => {
     if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
     const userId = authRes.user.id;
 
-    const { images = [], listing_id = null, overlay_logo_first = true, background = { type: 'none' }, provider = 'clipdrop' } = req.body || {};
+    const { images = [], listing_id = null, overlay_logo_first = true, background = { type: 'none' }, provider = 'removebg', quality = 'full', removebg = {} } = req.body || {};
     if (!Array.isArray(images) || images.length === 0) return res.status(400).json({ error: 'images required' });
 
     const jobs = [];
@@ -21,6 +21,8 @@ exports.enqueueProcessing = async (req, res) => {
         background: background || { type: 'none' },
         overlayLogo: overlay_logo_first && isFirst,
         outputFormat: 'png',
+        quality,
+        removebg,
       };
       jobs.push({ user_id: userId, listing_id, original_url: images[i], provider, options });
     }
@@ -107,6 +109,15 @@ exports.enqueueFromUpload = async (req, res) => {
     let background = { type: 'none' };
     if (bgType === 'white') background = { type: 'white' };
     if (bgType === 'template' && templateUrl) background = { type: 'template', url: templateUrl };
+    const quality = (req.body?.quality || 'full').toString();
+    let removebg = {};
+    try {
+      if (typeof req.body?.removebg === 'string') {
+        removebg = JSON.parse(req.body.removebg);
+      } else {
+        removebg = req.body?.removebg || {};
+      }
+    } catch {}
 
     // Upload each file to storage and enqueue by URL
     const urls = [];
@@ -122,7 +133,7 @@ exports.enqueueFromUpload = async (req, res) => {
       user_id: userId,
       original_url: u,
       provider: 'removebg',
-      options: { background, overlayLogo: idx === 0, outputFormat: 'png' },
+      options: { background, overlayLogo: idx === 0, outputFormat: 'png', quality, removebg },
     }));
 
     const { data, error } = await supabase.from('image_processing_jobs').insert(jobs).select('id');

@@ -17,12 +17,41 @@ async function removeBackgroundClipdrop(imageBuffer) {
   return Buffer.from(res.data);
 }
 
-async function removeBackgroundRemoveBg(imageBuffer) {
+async function removeBackgroundRemoveBg(imageBuffer, options = {}) {
   const key = process.env.REMOVEBG_API_KEY;
   if (!key) throw new Error('Missing REMOVEBG_API_KEY');
   const fd = new FormData();
   fd.append('image_file', imageBuffer, { filename: 'image.png' });
-  fd.append('size', 'auto');
+  const {
+    size = process.env.REMOVEBG_DEFAULT_SIZE || 'auto',
+    type = process.env.REMOVEBG_DEFAULT_TYPE || 'auto',
+    type_level,
+    format = process.env.REMOVEBG_DEFAULT_FORMAT || 'auto',
+    roi,
+    crop,
+    crop_margin,
+    scale,
+    position,
+    channels,
+    shadow_type,
+    shadow_opacity,
+    semitransparency,
+    bg_color,
+  } = options || {};
+  if (size) fd.append('size', String(size));
+  if (type) fd.append('type', String(type));
+  if (type_level) fd.append('type_level', String(type_level));
+  if (format) fd.append('format', String(format));
+  if (roi) fd.append('roi', String(roi));
+  if (typeof crop === 'boolean') fd.append('crop', crop ? 'true' : 'false');
+  if (crop_margin) fd.append('crop_margin', String(crop_margin));
+  if (scale) fd.append('scale', String(scale));
+  if (position) fd.append('position', String(position));
+  if (channels) fd.append('channels', String(channels));
+  if (shadow_type) fd.append('shadow_type', String(shadow_type));
+  if (typeof shadow_opacity !== 'undefined') fd.append('shadow_opacity', String(shadow_opacity));
+  if (typeof semitransparency === 'boolean') fd.append('semitransparency', semitransparency ? 'true' : 'false');
+  if (bg_color) fd.append('bg_color', String(bg_color).replace('#', ''));
   const res = await axios.post('https://api.remove.bg/v1.0/removebg', fd, {
     headers: { ...fd.getHeaders(), 'X-Api-Key': key },
     responseType: 'arraybuffer',
@@ -43,10 +72,10 @@ async function removeBackgroundRemoveBg(imageBuffer) {
   return Buffer.from(res.data);
 }
 
-async function removeBackground({ imageBuffer, provider = 'clipdrop' }) {
+async function removeBackground({ imageBuffer, provider = 'clipdrop', removebgOptions = {} }) {
   // Prefer Remove.bg if key is present and provider not explicitly clipdrop
   if (provider === 'removebg' || (process.env.REMOVEBG_API_KEY && provider !== 'clipdrop')) {
-    return await removeBackgroundRemoveBg(imageBuffer);
+    return await removeBackgroundRemoveBg(imageBuffer, removebgOptions);
   }
   return await removeBackgroundClipdrop(imageBuffer);
 }

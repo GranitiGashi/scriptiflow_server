@@ -15,7 +15,16 @@ async function processJob(job) {
   // 2) Remove background -> PNG with alpha
   let cutout;
   try {
-    cutout = await removeBackground({ imageBuffer: origBuffer, provider });
+    const removebgOptions = options?.removebg || {};
+    // If UI asked for white background, let removebg render it server-side
+    if (options?.background?.type === 'white') {
+      removebgOptions.bg_color = removebgOptions.bg_color || 'ffffff';
+      removebgOptions.format = removebgOptions.format || 'png';
+    }
+    // map basic UI size -> removebg size
+    if (options?.quality === 'preview') removebgOptions.size = 'preview';
+    if (options?.quality === 'full') removebgOptions.size = 'full';
+    cutout = await removeBackground({ imageBuffer: origBuffer, provider, removebgOptions });
   } catch (e) {
     if (e?.isRateLimit) {
       // requeue with a small backoff timestamp
