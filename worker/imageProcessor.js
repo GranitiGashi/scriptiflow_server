@@ -18,7 +18,8 @@ async function processJob(job) {
     const removebgOptions = options?.removebg || {};
     removebgOptions.type = 'car';
     removebgOptions.shadow_type = removebgOptions.shadow_type || 'car';
-    if (options?.background?.type === 'white') {
+    const applyWhiteViaRemovebg = options?.background?.type === 'white';
+    if (applyWhiteViaRemovebg) {
       removebgOptions.bg_color = removebgOptions.bg_color || 'ffffff';
       removebgOptions.format = removebgOptions.format || 'png';
     }
@@ -44,11 +45,15 @@ async function processJob(job) {
   let composed = cutout;
   // 3) Optional background replacement
   if (options.background?.type === 'white') {
-    const white = Buffer.alloc(4, 255); // 1x1 white pixel won't work; create programmatically using sharp
-    const sharp = require('sharp');
-    const meta = await sharp(cutout).metadata();
-    const bg = await sharp({ create: { width: meta.width || 1200, height: meta.height || 800, channels: 3, background: { r: 255, g: 255, b: 255 } } }).png().toBuffer();
-    composed = await replaceBackground(cutout, bg);
+    // If white background requested but not already applied via removebg, compose manually
+    const appliedViaRemovebg = true; // because we set bg_color earlier when type === 'white'
+    if (!appliedViaRemovebg) {
+      const white = Buffer.alloc(4, 255); // 1x1 white pixel won't work; create programmatically using sharp
+      const sharp = require('sharp');
+      const meta = await sharp(cutout).metadata();
+      const bg = await sharp({ create: { width: meta.width || 1200, height: meta.height || 800, channels: 3, background: { r: 255, g: 255, b: 255 } } }).png().toBuffer();
+      composed = await replaceBackground(cutout, bg);
+    }
   } else if (options.background?.type === 'template') {
     // use supplied url or fallback to account template
     let templateUrl = options.background?.url || null;
