@@ -12,15 +12,17 @@ async function processJob(job) {
   // 1) Download original
   const origBuffer = await fetchBufferFromUrl(job.original_url);
 
-  // 2) Remove background -> PNG with alpha
+  // 2) Remove background -> PNG with alpha; enforce car presets by default
   let cutout;
   try {
     const removebgOptions = options?.removebg || {};
-    // If UI asked for white background, let removebg render it server-side
+    removebgOptions.type = 'car';
+    removebgOptions.shadow_type = removebgOptions.shadow_type || 'car';
     if (options?.background?.type === 'white') {
       removebgOptions.bg_color = removebgOptions.bg_color || 'ffffff';
       removebgOptions.format = removebgOptions.format || 'png';
     }
+    // If UI asked for white background, let removebg render it server-side
     // map basic UI size -> removebg size
     if (options?.quality === 'preview') removebgOptions.size = 'preview';
     if (options?.quality === 'full') removebgOptions.size = 'full';
@@ -47,9 +49,21 @@ async function processJob(job) {
     const meta = await sharp(cutout).metadata();
     const bg = await sharp({ create: { width: meta.width || 1200, height: meta.height || 800, channels: 3, background: { r: 255, g: 255, b: 255 } } }).png().toBuffer();
     composed = await replaceBackground(cutout, bg);
-  } else if (options.background?.type === 'template' && options.background?.url) {
-    const bgBuf = await fetchBufferFromUrl(options.background.url);
-    composed = await replaceBackground(cutout, bgBuf);
+  } else if (options.background?.type === 'template') {
+    // use supplied url or fallback to account template
+    let templateUrl = options.background?.url || null;
+    if (!templateUrl) {
+      const { data: asset } = await supabase
+        .from('dealer_assets')
+        .select('branded_template_url')
+        .eq('user_id', job.user_id)
+        .maybeSingle();
+      templateUrl = asset?.branded_template_url || null;
+    }
+    if (templateUrl) {
+      const bgBuf = await fetchBufferFromUrl(templateUrl);
+      composed = await replaceBackground(cutout, bgBuf);
+    }
   } else if (options.background?.type === 'none' || !options.background) {
     // keep transparent PNG
   }
@@ -69,6 +83,15 @@ async function processJob(job) {
         const [iv, enc] = (cred.encrypted_password || '').split(':');
         const pwd = decrypt(enc, iv);
         logoUrl = await getDealerLogoUrl({ userId: job.user_id, username: cred.username, password: pwd });
+      }
+      if (!logoUrl) {
+        // fallback to assets page logo if set
+        const { data: asset } = await supabase
+          .from('dealer_assets')
+          .select('dealer_logo_url')
+          .eq('user_id', job.user_id)
+          .maybeSingle();
+        logoUrl = asset?.dealer_logo_url || null;
       }
       if (logoUrl) {
         const logoBuf = await fetchBufferFromUrl(logoUrl);
