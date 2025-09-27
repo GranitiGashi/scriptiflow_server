@@ -81,9 +81,7 @@ exports.getCredentials = async (req, res) => {
     if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
     const user = authRes.user;
     if (req.query?.demo === '1') {
-      const t = demo.getToken();
-      if (!t.token) return res.status(404).json({ error: 'Not connected (demo)' });
-      return res.json({ waba_phone_number_id: t.phoneNumberId, connected_at: new Date().toISOString() });
+      return res.json({ waba_phone_number_id: WA.PHONE_NUMBER_ID, connected_at: new Date().toISOString(), mode: 'hardcoded' });
     }
 
     const { data, error } = await supabase
