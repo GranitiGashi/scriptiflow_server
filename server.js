@@ -15,6 +15,7 @@ const adminRoutes = require('./routes/adminRoutes');
 const supportRoutes = require('./routes/supportRoutes');
 const whatsappRoutes = require('./routes/whatsappRoutes');
 const paymentController = require('./controllers/paymentController');
+const { runOnce: runImageWorkerOnce } = require('./worker/imageProcessor');
 
 
 const app = express();
@@ -67,3 +68,18 @@ app.use('/api', imageRoutes);
 
 const PORT = process.env.PORT || 8081;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+// Inline worker loop (optional). Avoids separate Render service.
+// Set RUN_INLINE_WORKER=true to enable. Uses an in-memory lock to avoid overlap.
+if (process.env.RUN_INLINE_WORKER === 'true') {
+  let busy = false;
+  const intervalMs = parseInt(process.env.INLINE_WORKER_INTERVAL_MS || '7000', 10);
+  setInterval(async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      await runImageWorkerOnce(5);
+    } catch (_) {}
+    busy = false;
+  }, intervalMs);
+}

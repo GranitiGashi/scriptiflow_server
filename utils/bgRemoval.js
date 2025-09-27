@@ -35,7 +35,10 @@ async function removeBackgroundRemoveBg(imageBuffer) {
 }
 
 async function removeBackground({ imageBuffer, provider = 'clipdrop' }) {
-  if (provider === 'removebg') return await removeBackgroundRemoveBg(imageBuffer);
+  // Prefer Remove.bg if key is present and provider not explicitly clipdrop
+  if (provider === 'removebg' || (process.env.REMOVEBG_API_KEY && provider !== 'clipdrop')) {
+    return await removeBackgroundRemoveBg(imageBuffer);
+  }
   return await removeBackgroundClipdrop(imageBuffer);
 }
 

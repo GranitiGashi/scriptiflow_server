@@ -1,7 +1,8 @@
 const supabase = require('../config/supabaseClient');
+const supabaseAdmin = require('../config/supabaseAdmin');
 const { removeBackground } = require('../utils/bgRemoval');
 const { fetchBufferFromUrl, overlayLogo, replaceBackground } = require('../utils/imageUtils');
-const { uploadBuffer } = require('../utils/storage');
+const { uploadBufferAdmin } = require('../utils/storage');
 const { getDealerLogoUrl } = require('../utils/dealerUtils');
 
 async function processJob(job) {
@@ -55,13 +56,13 @@ async function processJob(job) {
   // 5) Upload result
   const contentType = options.outputFormat === 'jpg' ? 'image/jpeg' : 'image/png';
   const bufferToUpload = composed;
-  const uploaded = await uploadBuffer({ buffer: bufferToUpload, contentType, pathPrefix: 'processed' });
+  const uploaded = await uploadBufferAdmin({ buffer: bufferToUpload, contentType, pathPrefix: 'processed' });
 
   return uploaded.url;
 }
 
 async function runOnce(limit = 10) {
-  const { data: jobs } = await supabase
+  const { data: jobs } = await supabaseAdmin
     .from('image_processing_jobs')
     .select('*')
     .eq('status', 'queued')
@@ -72,13 +73,13 @@ async function runOnce(limit = 10) {
   let processed = 0;
   for (const job of jobs) {
     try {
-      await supabase.from('image_processing_jobs').update({ status: 'processing', attempts: job.attempts + 1, updated_at: new Date().toISOString() }).eq('id', job.id);
+      await supabaseAdmin.from('image_processing_jobs').update({ status: 'processing', attempts: job.attempts + 1, updated_at: new Date().toISOString() }).eq('id', job.id);
       const url = await processJob(job);
-      await supabase.from('image_processing_jobs').update({ status: 'success', result_url: url, error: null, updated_at: new Date().toISOString() }).eq('id', job.id);
+      await supabaseAdmin.from('image_processing_jobs').update({ status: 'success', result_url: url, error: null, updated_at: new Date().toISOString() }).eq('id', job.id);
       processed += 1;
     } catch (e) {
       const msg = e?.response?.data ? JSON.stringify(e.response.data) : (e?.message || String(e));
-      await supabase.from('image_processing_jobs').update({ status: job.attempts + 1 >= 3 ? 'failed' : 'queued', error: msg, updated_at: new Date().toISOString() }).eq('id', job.id);
+      await supabaseAdmin.from('image_processing_jobs').update({ status: job.attempts + 1 >= 3 ? 'failed' : 'queued', error: msg, updated_at: new Date().toISOString() }).eq('id', job.id);
     }
   }
   return { processed };
