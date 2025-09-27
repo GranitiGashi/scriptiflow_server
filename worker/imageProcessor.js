@@ -24,8 +24,8 @@ async function processJob(job) {
     }
     // If UI asked for white background, let removebg render it server-side
     // map basic UI size -> removebg size
-    if (options?.quality === 'preview') removebgOptions.size = 'preview';
-    if (options?.quality === 'full') removebgOptions.size = 'full';
+    // if (options?.quality === 'preview') removebgOptions.size = 'preview';
+    // if (options?.quality === 'full') removebgOptions.size = 'full';
     cutout = await removeBackground({ imageBuffer: origBuffer, provider, removebgOptions });
   } catch (e) {
     if (e?.isRateLimit) {
