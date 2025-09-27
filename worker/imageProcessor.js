@@ -73,7 +73,17 @@ async function runOnce(limit = 10) {
   let processed = 0;
   for (const job of jobs) {
     try {
-      await supabaseAdmin.from('image_processing_jobs').update({ status: 'processing', attempts: job.attempts + 1, updated_at: new Date().toISOString() }).eq('id', job.id);
+      // Claim the job atomically: only if it is still queued
+      const { data: claimed } = await supabaseAdmin
+        .from('image_processing_jobs')
+        .update({ status: 'processing', attempts: job.attempts + 1, updated_at: new Date().toISOString() })
+        .eq('id', job.id)
+        .eq('status', 'queued')
+        .select('id');
+      if (!claimed || claimed.length === 0) {
+        // Another worker already claimed it
+        continue;
+      }
       const url = await processJob(job);
       await supabaseAdmin.from('image_processing_jobs').update({ status: 'success', result_url: url, error: null, updated_at: new Date().toISOString() }).eq('id', job.id);
       processed += 1;

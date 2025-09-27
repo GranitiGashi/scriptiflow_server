@@ -1,6 +1,7 @@
 const supabase = require('../config/supabaseClient');
 const { getUserFromRequest } = require('../utils/authUser');
 const { runOnce: runImageWorkerOnce } = require('../worker/imageProcessor');
+const { uploadBufferAdmin } = require('../utils/storage');
 
 exports.enqueueProcessing = async (req, res) => {
   try {
@@ -88,6 +89,46 @@ exports.runOnce = async (req, res) => {
     return res.json(result);
   } catch (err) {
     return res.status(500).json({ error: err.message || 'Failed to run worker' });
+  }
+};
+
+// Enqueue jobs from uploaded files
+exports.enqueueFromUpload = async (req, res) => {
+  try {
+    const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
+    const userId = authRes.user.id;
+    const files = Array.isArray(req.files) ? req.files : [];
+    if (!files.length) return res.status(400).json({ error: 'No files uploaded' });
+
+    // Upload each file to storage and enqueue by URL
+    const urls = [];
+    for (const f of files.slice(0, 20)) {
+      const buf = f.buffer || null;
+      // Multer diskStorage wrote to disk; read back
+      const fs = require('fs');
+      const path = require('path');
+      const filePath = f.path || path.join('uploads', f.filename);
+      const data = buf || fs.readFileSync(filePath);
+      const uploaded = await uploadBufferAdmin({ buffer: data, contentType: f.mimetype || 'image/png', pathPrefix: 'uploads' });
+      if (uploaded?.url) urls.push(uploaded.url);
+    }
+
+    if (!urls.length) return res.status(400).json({ error: 'Failed to upload files' });
+
+    const jobs = urls.map((u, idx) => ({
+      user_id: userId,
+      original_url: u,
+      provider: 'removebg',
+      options: { background: { type: 'white' }, overlayLogo: idx === 0, outputFormat: 'png' },
+    }));
+
+    const { data, error } = await supabase.from('image_processing_jobs').insert(jobs).select('id');
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ queued: data.map(r => r.id) });
+  } catch (err) {
+    console.error('enqueueFromUpload error:', err);
+    return res.status(500).json({ error: 'Failed to enqueue uploads', details: err.message });
   }
 };
 
