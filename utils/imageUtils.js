@@ -18,22 +18,15 @@ async function overlayLogo(baseBuffer, logoBuffer, options = {}) {
   const baseMeta = await sharp(baseBuffer).metadata();
   const targetLogoWidth = Math.round((baseMeta.width || 1000) * maxWidthRatio);
 
-  let logo = sharp(logoBuffer).resize({ width: targetLogoWidth, withoutEnlargement: true });
-  if (opacity < 1) {
-    // apply opacity by composing over transparent canvas
-    const logoPng = await logo.png().toBuffer();
-    const logoMeta = await sharp(logoPng).metadata();
-    const transparent = Buffer.alloc(logoMeta.width * logoMeta.height * 4, 0);
-    const composed = await sharp(transparent, { raw: { width: logoMeta.width, height: logoMeta.height, channels: 4 } })
-      .composite([{ input: logoPng, blend: 'over', opacity }])
-      .png()
-      .toBuffer();
-    logo = sharp(composed);
-  }
+  const logoResized = await sharp(logoBuffer)
+    .resize({ width: targetLogoWidth, withoutEnlargement: true })
+    .ensureAlpha()
+    .png()
+    .toBuffer();
 
-  const logoResized = await logo.png().toBuffer();
-  const composite = [{ input: logoResized, gravity: position, top: margin, left: margin }];
-  return await sharp(baseBuffer).composite(composite).toBuffer();
+  // Use blend: over with opacity to preserve base alpha
+  const composite = [{ input: logoResized, gravity: position, top: margin, left: margin, blend: 'over', opacity }];
+  return await sharp(baseBuffer).ensureAlpha().composite(composite).png().toBuffer();
 }
 
 async function replaceBackground(foregroundPngBuffer, backgroundBuffer, options = {}) {
