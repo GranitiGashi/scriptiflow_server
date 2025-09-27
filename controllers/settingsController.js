@@ -13,7 +13,15 @@ exports.getAssets = async (req, res) => {
       .select('dealer_logo_url, branded_template_url, updated_at')
       .eq('user_id', userId)
       .maybeSingle();
-    return res.json(data || {});
+    if (data) return res.json(data);
+
+    // Fallback: read from users_app if values were stored there
+    const { data: userRow } = await supabaseAdmin
+      .from('users_app')
+      .select('dealer_logo_url, branded_template_url, assets_updated_at')
+      .eq('id', userId)
+      .maybeSingle();
+    return res.json(userRow || {});
   } catch (err) {
     return res.status(500).json({ error: err.message || 'Failed to fetch assets' });
   }
