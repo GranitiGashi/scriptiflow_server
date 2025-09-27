@@ -27,7 +27,7 @@ async function processJob(job) {
       // use provided URL or account background as remove.bg bg_image_url
       let templateUrl = options.background?.url || null;
       if (!templateUrl) {
-        const { data: asset } = await supabase
+        const { data: asset } = await supabaseAdmin
           .from('dealer_assets')
           .select('branded_template_url')
           .eq('user_id', job.user_id)
@@ -94,7 +94,7 @@ async function processJob(job) {
       }
       if (!logoUrl) {
         // fallback to assets page logo if set
-        const { data: asset } = await supabase
+        const { data: asset } = await supabaseAdmin
           .from('dealer_assets')
           .select('dealer_logo_url')
           .eq('user_id', job.user_id)

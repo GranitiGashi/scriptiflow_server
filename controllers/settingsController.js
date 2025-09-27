@@ -8,7 +8,7 @@ exports.getAssets = async (req, res) => {
     const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
     if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
     const userId = authRes.user.id;
-    const { data } = await supabase
+    const { data } = await supabaseAdmin
       .from('dealer_assets')
       .select('dealer_logo_url, branded_template_url, updated_at')
       .eq('user_id', userId)
