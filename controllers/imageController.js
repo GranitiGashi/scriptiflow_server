@@ -104,12 +104,7 @@ exports.enqueueFromUpload = async (req, res) => {
     // Upload each file to storage and enqueue by URL
     const urls = [];
     for (const f of files.slice(0, 20)) {
-      const buf = f.buffer || null;
-      // Multer diskStorage wrote to disk; read back
-      const fs = require('fs');
-      const path = require('path');
-      const filePath = f.path || path.join('uploads', f.filename);
-      const data = buf || fs.readFileSync(filePath);
+      const data = f.buffer; // from memoryStorage
       const uploaded = await uploadBufferAdmin({ buffer: data, contentType: f.mimetype || 'image/png', pathPrefix: 'uploads' });
       if (uploaded?.url) urls.push(uploaded.url);
     }
