@@ -1,5 +1,6 @@
 const supabase = require('../config/supabaseClient');
 const { getUserFromRequest } = require('../utils/authUser');
+const { runOnce: runImageWorkerOnce } = require('../worker/imageProcessor');
 
 exports.enqueueProcessing = async (req, res) => {
   try {
@@ -75,6 +76,18 @@ exports.reprocessListing = async (req, res) => {
   } catch (err) {
     console.error('reprocessListing error:', err);
     return res.status(500).json({ error: 'Failed to reprocess', details: err.message });
+  }
+};
+
+// Run the image worker once (debug/helper)
+exports.runOnce = async (req, res) => {
+  try {
+    const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
+    const result = await runImageWorkerOnce(10);
+    return res.json(result);
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Failed to run worker' });
   }
 };
 
