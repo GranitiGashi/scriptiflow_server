@@ -21,6 +21,9 @@ router.post('/whatsapp/send', requireSupabaseAuth, controller.sendMessage);
 router.post('/whatsapp/mark-read', requireSupabaseAuth, controller.markRead);
 router.post('/whatsapp/tag', requireSupabaseAuth, controller.setTag);
 
+// Demo helpers (in-memory) for quick screencast
+router.get('/whatsapp/demo/inbox', requireSupabaseAuth, controller.demoInbox);
+
 module.exports = router;
 
 

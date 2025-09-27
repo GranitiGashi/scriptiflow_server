@@ -3,6 +3,7 @@ const supabase = require('../config/supabaseClient');
 const { getUserFromRequest } = require('../utils/authUser');
 const { encrypt, decrypt } = require('../utils/crypto');
 const axios = require('axios');
+const supabaseAdmin = require('../config/supabaseAdmin');
 
 async function fetchMobileDeListings(username, password) {
   const auth = 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
@@ -100,6 +101,23 @@ async function performMobileDeSyncForUser(userId) {
         first_seen: new Date().toISOString(),
         last_seen: new Date().toISOString(),
       });
+
+    // enqueue background image processing jobs for this listing
+    try {
+      const originalImages = imagesArr.length ? imagesArr : (image_xxxl_url ? [image_xxxl_url] : []);
+      if (originalImages.length) {
+        const jobs = originalImages.slice(0, 10).map((imgUrl, idx) => ({
+          user_id: userId,
+          listing_id: mobileAdId,
+          original_url: imgUrl,
+          provider: 'clipdrop',
+          options: { background: { type: 'white' }, overlayLogo: idx === 0, outputFormat: 'png' },
+        }));
+        await supabase.from('image_processing_jobs').insert(jobs);
+      }
+    } catch (e) {
+      // ignore queuing failures to not block sync
+    }
 
     // Enqueue social posts (facebook + instagram if linked)
     const platforms = ['facebook', 'instagram'];

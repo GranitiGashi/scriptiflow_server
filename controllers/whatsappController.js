@@ -3,6 +3,7 @@ const supabaseAdmin = require('../config/supabaseAdmin');
 const { getUserFromRequest } = require('../utils/authUser');
 const axios = require('axios');
 const { getFacebookUserToken } = require('../models/socialTokenModel');
+const demo = require('../utils/whatsappDemoStore');
 
 function normalizePhone(phone) {
   return (phone || '').replace(/\D+/g, '');
@@ -45,9 +46,14 @@ exports.connectWhatsApp = async (req, res) => {
     if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
     const user = authRes.user;
     const { waba_phone_number_id, waba_business_account_id, access_token } = req.body || {};
-    if (!waba_phone_number_id && !access_token) {
-      return res.status(400).json({ error: 'Provide phone_number_id or use auto onboarding' });
+    // DEMO: allow hardcoded token only mode (no DB), for quick connect button
+    if (req.query?.demo === '1') {
+      if (!access_token) return res.status(400).json({ error: 'access_token required for demo connect' });
+      demo.setToken(access_token, waba_phone_number_id || 'YOUR_PHONE_NUMBER_ID');
+      return res.json({ status: 'connected-demo' });
     }
+
+    if (!waba_phone_number_id && !access_token) return res.status(400).json({ error: 'Provide phone_number_id or access_token' });
 
     // Store credentials encrypted at app level; you commented schema creation; assuming table exists or will be added later
     const record = {
@@ -73,6 +79,12 @@ exports.getCredentials = async (req, res) => {
     const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
     if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
     const user = authRes.user;
+    if (req.query?.demo === '1') {
+      const t = demo.getToken();
+      if (!t.token) return res.status(404).json({ error: 'Not connected (demo)' });
+      return res.json({ waba_phone_number_id: t.phoneNumberId, connected_at: new Date().toISOString() });
+    }
+
     const { data, error } = await supabase
       .from('whatsapp_credentials')
       .select('waba_phone_number_id, waba_business_account_id, connected_at')
@@ -164,7 +176,7 @@ exports.disconnect = async (req, res) => {
 };
 
 exports.webhookVerify = async (req, res) => {
-  const verify_token = process.env.WHATSAPP_VERIFY_TOKEN || 'verify-token';
+  const verify_token = EAAZA4UT82JSoBPtZApMshmrXOjOSv6YV4bCfxiRZCH9AqeRd0tF87aFLG7OcIbaSyYww8ePva8ZCjLT4esvKTXRjArJzClJ9M7ZCofeZBOu5sPce1FS1z5cbtZC0Jgq4XfcY9hVfNm45SClSXFzFOirGhIKRyrCPWTnhgSRZBGuMQZAfMr085wewoCfZAkgK9OBKUUL0sqH4r5WtmcYEFwNdZCI76Y2kUrdEh8tuoA3MPICIJDVZA8wZD || 'verify-token';
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
@@ -182,6 +194,15 @@ exports.webhookReceive = async (req, res) => {
     const messages = changes?.value?.messages || [];
     const metadata = changes?.value?.metadata;
     if (!messages.length) return res.sendStatus(200);
+
+    // DEMO: mirror inbound into memory inbox for screencast
+    if (req.query?.demo === '1') {
+      for (const msg of messages) {
+        const text = msg.text?.body || '';
+        demo.addMessage({ from: msg.from, to: 'me', body: text, direction: 'inbound' });
+      }
+      return res.sendStatus(200);
+    }
 
     // Find dealership user by phone_number_id in credentials
     const phone_number_id = metadata?.phone_number_id;
@@ -268,8 +289,24 @@ exports.sendMessage = async (req, res) => {
     const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
     if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
     const user = authRes.user;
-    const { conversation_id, message } = req.body || {};
-    if (!conversation_id || !message) return res.status(400).json({ error: 'conversation_id and message required' });
+    const { conversation_id, message, to } = req.body || {};
+    if (req.query?.demo === '1') {
+      const { token, phoneNumberId } = demo.getToken();
+      if (!token) return res.status(400).json({ error: 'Demo token not set. Connect first.' });
+      if (!to || !message) return res.status(400).json({ error: 'to and message required' });
+      const url = `https://graph.facebook.com/v19.0/${phoneNumberId || 'YOUR_PHONE_NUMBER_ID'}/messages`;
+      await axios.post(url, { messaging_product: 'whatsapp', to, text: { body: message } }, { headers: { Authorization: `Bearer ${token}` }, validateStatus: () => true });
+      demo.addMessage({ from: 'me', to, body: message, direction: 'outbound' });
+      return res.json({ sent: true });
+    }
+
+    const { data: c0 } = await supabase
+      .from('whatsapp_conversations')
+      .select('id')
+      .eq('id', conversation_id)
+      .eq('user_id', user.id)
+      .maybeSingle();
+    if (!c0) return res.status(400).json({ error: 'conversation_id required' });
 
     // Get conversation and contact
     const { data: conv, error: cErr } = await supabase
@@ -319,6 +356,18 @@ exports.sendMessage = async (req, res) => {
     return res.json({ sent: true });
   } catch (err) {
     return res.status(500).json({ error: err.message || 'Failed to send' });
+  }
+};
+
+// DEMO inbox
+exports.demoInbox = async (req, res) => {
+  try {
+    const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
+    const list = demo.listMessages();
+    return res.json(list);
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Server error' });
   }
 };
 

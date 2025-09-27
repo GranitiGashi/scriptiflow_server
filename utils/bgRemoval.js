@@ -1,0 +1,43 @@
+const axios = require('axios');
+const FormData = require('form-data');
+
+async function removeBackgroundClipdrop(imageBuffer) {
+  const key = process.env.CLIPDROP_API_KEY;
+  if (!key) throw new Error('Missing CLIPDROP_API_KEY');
+  const fd = new FormData();
+  fd.append('image_file', imageBuffer, { filename: 'image.png' });
+  const res = await axios.post('https://api.clipdrop.co/remove-background/v1', fd, {
+    headers: { ...fd.getHeaders(), 'x-api-key': key },
+    responseType: 'arraybuffer',
+    validateStatus: () => true,
+  });
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`Clipdrop failed: ${res.status} ${res.data?.toString?.() || ''}`);
+  }
+  return Buffer.from(res.data);
+}
+
+async function removeBackgroundRemoveBg(imageBuffer) {
+  const key = process.env.REMOVEBG_API_KEY;
+  if (!key) throw new Error('Missing REMOVEBG_API_KEY');
+  const fd = new FormData();
+  fd.append('image_file', imageBuffer, { filename: 'image.png' });
+  fd.append('size', 'auto');
+  const res = await axios.post('https://api.remove.bg/v1.0/removebg', fd, {
+    headers: { ...fd.getHeaders(), 'X-Api-Key': key },
+    responseType: 'arraybuffer',
+    validateStatus: () => true,
+  });
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`Remove.bg failed: ${res.status} ${res.data?.toString?.() || ''}`);
+  }
+  return Buffer.from(res.data);
+}
+
+async function removeBackground({ imageBuffer, provider = 'clipdrop' }) {
+  if (provider === 'removebg') return await removeBackgroundRemoveBg(imageBuffer);
+  return await removeBackgroundClipdrop(imageBuffer);
+}
+
+module.exports = { removeBackground };
+
