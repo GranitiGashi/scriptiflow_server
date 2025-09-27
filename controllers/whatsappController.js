@@ -4,6 +4,7 @@ const { getUserFromRequest } = require('../utils/authUser');
 const axios = require('axios');
 const { getFacebookUserToken } = require('../models/socialTokenModel');
 const demo = require('../utils/whatsappDemoStore');
+const WA = require('../utils/whatsappConfig');
 
 function normalizePhone(phone) {
   return (phone || '').replace(/\D+/g, '');
@@ -176,11 +177,10 @@ exports.disconnect = async (req, res) => {
 };
 
 exports.webhookVerify = async (req, res) => {
-  const verify_token = EAAZA4UT82JSoBPtZApMshmrXOjOSv6YV4bCfxiRZCH9AqeRd0tF87aFLG7OcIbaSyYww8ePva8ZCjLT4esvKTXRjArJzClJ9M7ZCofeZBOu5sPce1FS1z5cbtZC0Jgq4XfcY9hVfNm45SClSXFzFOirGhIKRyrCPWTnhgSRZBGuMQZAfMr085wewoCfZAkgK9OBKUUL0sqH4r5WtmcYEFwNdZCI76Y2kUrdEh8tuoA3MPICIJDVZA8wZD || 'verify-token';
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
-  if (mode === 'subscribe' && token === verify_token) {
+  if (mode === 'subscribe' && token === WA.VERIFY_TOKEN) {
     return res.status(200).send(challenge);
   }
   return res.sendStatus(403);
@@ -291,11 +291,9 @@ exports.sendMessage = async (req, res) => {
     const user = authRes.user;
     const { conversation_id, message, to } = req.body || {};
     if (req.query?.demo === '1') {
-      const { token, phoneNumberId } = demo.getToken();
-      if (!token) return res.status(400).json({ error: 'Demo token not set. Connect first.' });
       if (!to || !message) return res.status(400).json({ error: 'to and message required' });
-      const url = `https://graph.facebook.com/v19.0/${phoneNumberId || 'YOUR_PHONE_NUMBER_ID'}/messages`;
-      await axios.post(url, { messaging_product: 'whatsapp', to, text: { body: message } }, { headers: { Authorization: `Bearer ${token}` }, validateStatus: () => true });
+      const url = `https://graph.facebook.com/v19.0/${WA.PHONE_NUMBER_ID}/messages`;
+      await axios.post(url, { messaging_product: 'whatsapp', to, text: { body: message } }, { headers: { Authorization: `Bearer ${WA.ACCESS_TOKEN}` }, validateStatus: () => true });
       demo.addMessage({ from: 'me', to, body: message, direction: 'outbound' });
       return res.json({ sent: true });
     }

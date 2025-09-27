@@ -1,6 +1,6 @@
-const store = {
-  token: 'EAAZA4UT82JSoBPtZApMshmrXOjOSv6YV4bCfxiRZCH9AqeRd0tF87aFLG7OcIbaSyYww8ePva8ZCjLT4esvKTXRjArJzClJ9M7ZCofeZBOu5sPce1FS1z5cbtZC0Jgq4XfcY9hVfNm45SClSXFzFOirGhIKRyrCPWTnhgSRZBGuMQZAfMr085wewoCfZAkgK9OBKUUL0sqH4r5WtmcYEFwNdZCI76Y2kUrdEh8tuoA3MPICIJDVZA8wZD',
-  phoneNumberId: 763481470187721,
+ const store = {
+   token: null,
+   phoneNumberId: null,
   inbox: [
     {
       id: 'demo-1',
