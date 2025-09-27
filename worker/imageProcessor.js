@@ -13,7 +13,22 @@ async function processJob(job) {
   const origBuffer = await fetchBufferFromUrl(job.original_url);
 
   // 2) Remove background -> PNG with alpha
-  const cutout = await removeBackground({ imageBuffer: origBuffer, provider });
+  let cutout;
+  try {
+    cutout = await removeBackground({ imageBuffer: origBuffer, provider });
+  } catch (e) {
+    if (e?.isRateLimit) {
+      // requeue with a small backoff timestamp
+      await supabaseAdmin
+        .from('image_processing_jobs')
+        .update({ status: 'queued', error: 'rate_limited', updated_at: new Date().toISOString() })
+        .eq('id', job.id);
+      const waitMs = (e.retryAfter ? e.retryAfter * 1000 : 5000);
+      await new Promise(r => setTimeout(r, waitMs));
+      throw e; // let the runner loop move on; job will be retried
+    }
+    throw e;
+  }
 
   let composed = cutout;
   // 3) Optional background replacement

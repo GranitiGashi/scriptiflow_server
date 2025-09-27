@@ -73,12 +73,13 @@ app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 // Set RUN_INLINE_WORKER=true to enable. Uses an in-memory lock to avoid overlap.
 if (process.env.RUN_INLINE_WORKER === 'true') {
   let busy = false;
-  const intervalMs = parseInt(process.env.INLINE_WORKER_INTERVAL_MS || '7000', 10);
+  const intervalMs = parseInt(process.env.INLINE_WORKER_INTERVAL_MS || process.env.IMAGE_WORKER_INTERVAL_MS || '4000', 10);
   setInterval(async () => {
     if (busy) return;
     busy = true;
     try {
-      await runImageWorkerOnce(5);
+      const batch = parseInt(process.env.IMAGE_WORKER_BATCH || '3', 10);
+      await runImageWorkerOnce(batch);
     } catch (_) {}
     busy = false;
   }, intervalMs);

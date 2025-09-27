@@ -28,8 +28,17 @@ async function removeBackgroundRemoveBg(imageBuffer) {
     responseType: 'arraybuffer',
     validateStatus: () => true,
   });
+  if (res.status === 429) {
+    const err = new Error('removebg rate limit');
+    err.isRateLimit = true;
+    const ra = res.headers?.['retry-after'];
+    err.retryAfter = ra ? parseInt(ra, 10) : null;
+    throw err;
+  }
   if (res.status < 200 || res.status >= 300) {
-    throw new Error(`Remove.bg failed: ${res.status} ${res.data?.toString?.() || ''}`);
+    const e = new Error(`Remove.bg failed: ${res.status}`);
+    e.statusCode = res.status;
+    throw e;
   }
   return Buffer.from(res.data);
 }
