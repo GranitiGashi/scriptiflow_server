@@ -17,7 +17,7 @@ async function removeBackgroundClipdrop(imageBuffer) {
   return Buffer.from(res.data);
 }
 
-async function removeBackgroundRemoveBg(imageBuffer, options = {}) {
+async function removeBackgroundRemoveBg(imageBuffer, options = {}, bgImageBuffer = null) {
   const key = process.env.REMOVEBG_API_KEY;
   if (!key) throw new Error('Missing REMOVEBG_API_KEY');
   const fd = new FormData();
@@ -54,6 +54,7 @@ async function removeBackgroundRemoveBg(imageBuffer, options = {}) {
   if (typeof semitransparency === 'boolean') fd.append('semitransparency', semitransparency ? 'true' : 'false');
   if (bg_color) fd.append('bg_color', String(bg_color).replace('#', ''));
   if (bg_image_url) fd.append('bg_image_url', String(bg_image_url));
+  if (bgImageBuffer) fd.append('bg_image_file', bgImageBuffer, { filename: 'background.jpg' });
   const res = await axios.post('https://api.remove.bg/v1.0/removebg', fd, {
     headers: { ...fd.getHeaders(), 'X-Api-Key': key },
     responseType: 'arraybuffer',
@@ -74,10 +75,10 @@ async function removeBackgroundRemoveBg(imageBuffer, options = {}) {
   return Buffer.from(res.data);
 }
 
-async function removeBackground({ imageBuffer, provider = 'clipdrop', removebgOptions = {} }) {
+async function removeBackground({ imageBuffer, provider = 'clipdrop', removebgOptions = {}, bgImageBuffer = null }) {
   // Prefer Remove.bg if key is present and provider not explicitly clipdrop
   if (provider === 'removebg' || (process.env.REMOVEBG_API_KEY && provider !== 'clipdrop')) {
-    return await removeBackgroundRemoveBg(imageBuffer, removebgOptions);
+    return await removeBackgroundRemoveBg(imageBuffer, removebgOptions, bgImageBuffer);
   }
   return await removeBackgroundClipdrop(imageBuffer);
 }

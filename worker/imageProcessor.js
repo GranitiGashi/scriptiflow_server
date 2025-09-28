@@ -43,7 +43,20 @@ async function processJob(job) {
     // map basic UI size -> removebg size
     // if (options?.quality === 'preview') removebgOptions.size = 'preview';
     // if (options?.quality === 'full') removebgOptions.size = 'full';
-    cutout = await removeBackground({ imageBuffer: origBuffer, provider, removebgOptions });
+    // We can also support bg_image_file by downloading template and forwarding buffer when needed
+    let bgImageBuffer = null;
+    if (!removebgOptions.bg_image_url && options?.background?.type === 'template') {
+      // if URL missing, try reading file URL then downloading to buffer
+      const { data: asset } = await supabaseAdmin
+        .from('users_app')
+        .select('branded_template_url')
+        .eq('id', job.user_id)
+        .maybeSingle();
+      if (asset?.branded_template_url) {
+        bgImageBuffer = await fetchBufferFromUrl(asset.branded_template_url);
+      }
+    }
+    cutout = await removeBackground({ imageBuffer: origBuffer, provider, removebgOptions, bgImageBuffer });
   } catch (e) {
     if (e?.isRateLimit) {
       // requeue with a small backoff timestamp
