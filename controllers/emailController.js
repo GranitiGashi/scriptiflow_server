@@ -415,7 +415,11 @@ exports.getOutlookLoginUrl = async (req, res) => {
 exports.outlookCallback = async (req, res) => {
   try {
     const { code, state, error } = req.query;
-    if (error) return res.redirect(`${FRONTEND_URL}/connect?status=error&message=${encodeURIComponent(String(error))}`);
+    if (error){
+      return res.redirect(`${FRONTEND_URL}/connect?status=error&message=${encodeURIComponent(String(error))}`);
+    
+      console.error('Outlook token error:', e.response?.data || e.message)
+    } 
     let user_id = null;
     try { user_id = JSON.parse(decodeURIComponent(state || ''))?.user_id || null; } catch (_) {}
     if (!code || !user_id) return res.redirect(`${FRONTEND_URL}/connect?status=error&message=${encodeURIComponent('Invalid OAuth response')}`);
