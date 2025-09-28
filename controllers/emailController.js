@@ -387,7 +387,7 @@ exports.gmailCallback = async (req, res) => {
       updated_at: new Date().toISOString(),
     };
     await supabaseAdmin.from('email_credentials').upsert(record, { onConflict: 'user_id,provider' });
-    return res.redirect(`${FRONTEND_URL}/connect?status=success`);
+    return res.redirect(`${FRONTEND_URL}/dashboard/social-media`);
   } catch (e) {
     return res.redirect(`${FRONTEND_URL}/connect?status=error&message=${encodeURIComponent('Failed to connect Gmail')}`);
   }
@@ -414,13 +414,16 @@ exports.getOutlookLoginUrl = async (req, res) => {
 
 exports.outlookCallback = async (req, res) => {
   try {
-    const { code, state, error } = req.query;
-    if (error){
-    console.log('Outlook token error:', error)
-    } 
+    const { code, state, error, error_description } = req.query;
+    if (error) {
+      console.error('Outlook OAuth error:', { error, error_description });
+      return res.redirect(`${FRONTEND_URL}/connect?status=error&message=${encodeURIComponent(error_description || error)}`);
+    }
     let user_id = null;
     try { user_id = JSON.parse(decodeURIComponent(state || ''))?.user_id || null; } catch (_) {}
-    if (!code || !user_id) return res.redirect(`${FRONTEND_URL}/connect?status=error&message=${encodeURIComponent('Invalid OAuth response')}`);
+    if (!code || !user_id) {
+      return res.redirect(`${FRONTEND_URL}/connect?status=error&message=${encodeURIComponent('Invalid OAuth response')}`);
+    }
 
     const tokenRes = await axios.post(`https://login.microsoftonline.com/${MS_TENANT}/oauth2/v2.0/token`, new URLSearchParams({
       client_id: MS_CLIENT_ID,
@@ -435,7 +438,6 @@ exports.outlookCallback = async (req, res) => {
     const refreshToken = tokenRes.data.refresh_token;
     const expiresIn = tokenRes.data.expires_in || 3600;
 
-    // Get user principal email
     let accountEmail = null;
     try {
       const me = await axios.get('https://graph.microsoft.com/v1.0/me', { headers: { Authorization: `Bearer ${accessToken}` } });
@@ -457,9 +459,11 @@ exports.outlookCallback = async (req, res) => {
       updated_at: new Date().toISOString(),
     };
     await supabaseAdmin.from('email_credentials').upsert(record, { onConflict: 'user_id,provider' });
-    return res.redirect(`${FRONTEND_URL}/connect?status=success`);
+    return res.redirect(`${FRONTEND_URL}/dashboard/social-media`);
   } catch (e) {
-    return res.redirect(`${FRONTEND_URL}/connect?status=error&message=${encodeURIComponent('Failed to connect Outlook')}`);
+    console.error('Outlook token error:', e.response?.data || e.message);
+    const msg = e.response?.data?.error_description || e.response?.data?.error || e.message || 'Failed to connect Outlook';
+    return res.redirect(`${FRONTEND_URL}/connect?status=error&message=${encodeURIComponent(msg)}`);
   }
 };
 
