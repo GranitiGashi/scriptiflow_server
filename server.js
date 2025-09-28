@@ -15,6 +15,7 @@ const adminRoutes = require('./routes/adminRoutes');
 const supportRoutes = require('./routes/supportRoutes');
 const whatsappRoutes = require('./routes/whatsappRoutes');
 const settingsRoutes = require('./routes/settingsRoutes');
+const creditsRoutes = require('./routes/creditsRoutes');
 const paymentController = require('./controllers/paymentController');
 const { runOnce: runImageWorkerOnce } = require('./worker/imageProcessor');
 
@@ -67,6 +68,7 @@ app.use('/api', contactsRoutes);
 app.use('/api', calendarRoutes);
 app.use('/api', imageRoutes);
 app.use('/api', settingsRoutes);
+app.use('/api', creditsRoutes);
 
 const PORT = process.env.PORT || 8081;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
