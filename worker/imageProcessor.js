@@ -24,15 +24,23 @@ async function processJob(job) {
       removebgOptions.format = removebgOptions.format || 'png';
     }
     if (options?.background?.type === 'template') {
-      // use provided URL or account background as remove.bg bg_image_url
+      // Prefer URL for remove.bg: users_app first, then dealer_assets, then job options
       let templateUrl = options.background?.url || null;
       if (!templateUrl) {
-        const { data: asset } = await supabaseAdmin
-          .from('dealer_assets')
+        const { data: userRow } = await supabaseAdmin
+          .from('users_app')
           .select('branded_template_url')
-          .eq('user_id', job.user_id)
+          .eq('id', job.user_id)
           .maybeSingle();
-        templateUrl = asset?.branded_template_url || null;
+        templateUrl = userRow?.branded_template_url || null;
+        if (!templateUrl) {
+          const { data: asset } = await supabaseAdmin
+            .from('dealer_assets')
+            .select('branded_template_url')
+            .eq('user_id', job.user_id)
+            .maybeSingle();
+          templateUrl = asset?.branded_template_url || null;
+        }
       }
       if (templateUrl) {
         removebgOptions.bg_image_url = templateUrl;
@@ -46,15 +54,23 @@ async function processJob(job) {
     // We can also support bg_image_file by downloading template and forwarding buffer when needed
     let bgImageBuffer = null;
     if (!removebgOptions.bg_image_url && options?.background?.type === 'template') {
-      // if URL missing, try reading file URL then downloading to buffer
-      const { data: asset } = await supabaseAdmin
+      // If URL still missing, build from users_app or dealer_assets
+      let url = null;
+      const { data: userRow } = await supabaseAdmin
         .from('users_app')
         .select('branded_template_url')
         .eq('id', job.user_id)
         .maybeSingle();
-      if (asset?.branded_template_url) {
-        bgImageBuffer = await fetchBufferFromUrl(asset.branded_template_url);
+      url = userRow?.branded_template_url || null;
+      if (!url) {
+        const { data: asset } = await supabaseAdmin
+          .from('dealer_assets')
+          .select('branded_template_url')
+          .eq('user_id', job.user_id)
+          .maybeSingle();
+        url = asset?.branded_template_url || null;
       }
+      if (url) bgImageBuffer = await fetchBufferFromUrl(url);
     }
     cutout = await removeBackground({ imageBuffer: origBuffer, provider, removebgOptions, bgImageBuffer });
   } catch (e) {
