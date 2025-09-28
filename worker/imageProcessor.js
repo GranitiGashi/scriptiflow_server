@@ -24,7 +24,6 @@ async function processJob(job) {
       removebgOptions.format = removebgOptions.format || 'auto';
     }
     if (options?.background?.type === 'template') {
-      // Prefer URL for remove.bg: users_app first, then dealer_assets, then job options
       let templateUrl = options.background?.url || null;
       if (!templateUrl) {
         const { data: userRow } = await supabaseAdmin
@@ -43,6 +42,7 @@ async function processJob(job) {
         }
       }
       if (templateUrl) {
+        // 🔑 This line ensures remove.bg uses the template
         removebgOptions.bg_image_url = templateUrl;
         removebgOptions.format = removebgOptions.format || 'auto';
       }
