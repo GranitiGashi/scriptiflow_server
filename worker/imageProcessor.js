@@ -21,7 +21,7 @@ async function processJob(job) {
     const applyWhiteViaRemovebg = options?.background?.type === 'white';
     if (applyWhiteViaRemovebg) {
       removebgOptions.bg_color = removebgOptions.bg_color || 'ffffff';
-      removebgOptions.format = removebgOptions.format || 'png';
+      removebgOptions.format = removebgOptions.format || 'auto';
     }
     if (options?.background?.type === 'template') {
       // Prefer URL for remove.bg: users_app first, then dealer_assets, then job options
@@ -44,13 +44,24 @@ async function processJob(job) {
       }
       if (templateUrl) {
         removebgOptions.bg_image_url = templateUrl;
-        removebgOptions.format = removebgOptions.format || 'png';
+        removebgOptions.format = removebgOptions.format || 'auto';
       }
     }
-    // If UI asked for white background, let removebg render it server-side
-    // map basic UI size -> removebg size
-    // if (options?.quality === 'preview') removebgOptions.size = 'preview';
-    // if (options?.quality === 'full') removebgOptions.size = 'full';
+    // Set defaults per provided curl
+    if (!removebgOptions.size) {
+      if (options?.quality === 'preview') removebgOptions.size = 'preview';
+      else if (options?.quality === 'full') removebgOptions.size = 'full';
+      else removebgOptions.size = 'auto';
+    }
+    if (typeof removebgOptions.semitransparency === 'undefined') removebgOptions.semitransparency = true;
+    if (!removebgOptions.position) removebgOptions.position = 'original';
+    if (!removebgOptions.scale) removebgOptions.scale = 'original';
+    if (!removebgOptions.roi) removebgOptions.roi = '0% 0% 100% 100%';
+    if (typeof removebgOptions.shadow_opacity === 'undefined') removebgOptions.shadow_opacity = 90;
+    if (typeof removebgOptions.crop === 'undefined') removebgOptions.crop = false;
+    if (!removebgOptions.channels) removebgOptions.channels = 'rgba';
+    if (!removebgOptions.format) removebgOptions.format = 'auto';
+    if (!removebgOptions.type_level) removebgOptions.type_level = '1';
     // We can also support bg_image_file by downloading template and forwarding buffer when needed
     let bgImageBuffer = null;
     if (!removebgOptions.bg_image_url && options?.background?.type === 'template') {
