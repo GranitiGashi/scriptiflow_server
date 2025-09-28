@@ -416,11 +416,7 @@ exports.outlookCallback = async (req, res) => {
   try {
     const { code, state, error } = req.query;
     if (error){
-      console.error('Outlook token error:', e.response?.data || e.message)
-      console.error('Outlook token error3333:', error)
-      return res.redirect(`${FRONTEND_URL}/connect?status=error&message=${encodeURIComponent(String(error))}`);
-    
-     
+    console.log('Outlook token error:', error)
     } 
     let user_id = null;
     try { user_id = JSON.parse(decodeURIComponent(state || ''))?.user_id || null; } catch (_) {}
