@@ -4,6 +4,7 @@ const { removeBackground } = require('../utils/bgRemoval');
 const { fetchBufferFromUrl, overlayLogo, replaceBackground } = require('../utils/imageUtils');
 const { uploadBufferAdmin } = require('../utils/storage');
 const { getDealerLogoUrl } = require('../utils/dealerUtils');
+const { onImageProcessed } = require('../controllers/creditsController');
 
 async function processJob(job) {
   const options = job.options || {};
@@ -181,6 +182,8 @@ async function runOnce(limit = 10) {
       }
       const url = await processJob(job);
       await supabaseAdmin.from('image_processing_jobs').update({ status: 'success', result_url: url, error: null, updated_at: new Date().toISOString() }).eq('id', job.id);
+      // deduct per-image credit
+      await onImageProcessed({ userId: job.user_id, jobId: job.id });
       processed += 1;
     } catch (e) {
       const msg = e?.response?.data ? JSON.stringify(e.response.data) : (e?.message || String(e));
