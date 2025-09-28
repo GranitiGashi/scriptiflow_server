@@ -55,6 +55,26 @@ async function removeBackgroundRemoveBg(imageBuffer, options = {}, bgImageBuffer
   if (bg_color) fd.append('bg_color', String(bg_color).replace('#', ''));
   if (bg_image_url) fd.append('bg_image_url', String(bg_image_url));
   if (bgImageBuffer) fd.append('bg_image_file', bgImageBuffer, { filename: 'background.jpg' });
+
+  if (process.env.DEBUG_REMOVE_BG === 'true') {
+    try {
+      const safe = {
+        size, type, type_level, format, channels,
+        crop: typeof crop === 'boolean' ? crop : undefined,
+        crop_margin: crop_margin || undefined,
+        scale: scale || undefined,
+        position: position || undefined,
+        roi: roi || undefined,
+        shadow_type: shadow_type || undefined,
+        shadow_opacity: typeof shadow_opacity !== 'undefined' ? shadow_opacity : undefined,
+        semitransparency: typeof semitransparency === 'boolean' ? semitransparency : undefined,
+        bg_color_set: !!bg_color,
+        bg_image_url_set: !!bg_image_url,
+        bg_image_file: !!bgImageBuffer,
+      };
+      console.log('[remove.bg] request params:', safe);
+    } catch (_) {}
+  }
   const res = await axios.post('https://api.remove.bg/v1.0/removebg', fd, {
     headers: { ...fd.getHeaders(), 'X-Api-Key': key },
     responseType: 'arraybuffer',
