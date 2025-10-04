@@ -40,7 +40,8 @@ async function performMobileDeSyncForUser(userId) {
     .from('mobile_de_credentials')
     .select('username, encrypted_password')
     .eq('user_id', userId)
-    .single();
+    .eq('provider', 'mobile_de')
+    .maybeSingle();
   if (credRes.error || !credRes.data) {
     return { synced: false, new_listings: 0, total_seen: 0, reason: 'no_credentials' };
   }
@@ -65,6 +66,7 @@ async function performMobileDeSyncForUser(userId) {
       .from('mobile_de_listings')
       .select('mobile_ad_id')
       .eq('user_id', userId)
+      .eq('provider', 'mobile_de')
       .eq('mobile_ad_id', mobileAdId)
       .maybeSingle();
     if (existing) {
@@ -73,6 +75,7 @@ async function performMobileDeSyncForUser(userId) {
         .from('mobile_de_listings')
         .update({ last_seen: new Date().toISOString() })
         .eq('user_id', userId)
+        .eq('provider', 'mobile_de')
         .eq('mobile_ad_id', mobileAdId);
       continue;
     }
@@ -94,6 +97,7 @@ async function performMobileDeSyncForUser(userId) {
       .from('mobile_de_listings')
       .insert({
         user_id: userId,
+        provider: 'mobile_de',
         mobile_ad_id: mobileAdId,
         details,
         image_xxxl_url,
@@ -143,7 +147,8 @@ async function performMobileDeSyncForUser(userId) {
   await supabase
     .from('mobile_de_credentials')
     .update({ last_sync_at: new Date().toISOString() })
-    .eq('user_id', userId);
+    .eq('user_id', userId)
+    .eq('provider', 'mobile_de');
 
   return { synced: true, new_listings: newCount, total_seen: ads.length };
 }
@@ -156,6 +161,7 @@ async function maybeStartBackgroundSync(userId) {
       .from('mobile_de_credentials')
       .select('last_sync_at')
       .eq('user_id', userId)
+      .eq('provider', 'mobile_de')
       .maybeSingle();
 
     const last = cred?.last_sync_at ? new Date(cred.last_sync_at).getTime() : 0;
@@ -205,8 +211,8 @@ exports.connectMobile = async (req, res) => {
     const upsertRes = await supabase
       .from('mobile_de_credentials')
       .upsert(
-        { user_id: userId, username, encrypted_password: `${iv}:${encryptedData}` },
-        { onConflict: ['user_id'] }
+        { user_id: userId, provider: 'mobile_de', username, encrypted_password: `${iv}:${encryptedData}` },
+        { onConflict: ['user_id', 'provider'] }
       );
 
     if (upsertRes.error) {
@@ -242,7 +248,8 @@ exports.getMobileCredentials = async (req, res) => {
       .from('mobile_de_credentials')
       .select('username, encrypted_password')
       .eq('user_id', userId)
-      .single();
+      .eq('provider', 'mobile_de')
+      .maybeSingle();
 
     if (selectRes.error) {
       console.error('Supabase select error:', selectRes.error.message);
@@ -291,7 +298,8 @@ exports.editMobileCredentials = async (req, res) => {
     const updateRes = await supabase
       .from('mobile_de_credentials')
       .update({ username, encrypted_password: `${iv}:${encryptedData}` })
-      .eq('user_id', userId);
+      .eq('user_id', userId)
+      .eq('provider', 'mobile_de');
 
     if (updateRes.error) {
       console.error('Supabase update error:', updateRes.error.message);
@@ -325,7 +333,8 @@ exports.deleteMobileCredentials = async (req, res) => {
     const { error: deleteError } = await supabase
       .from('mobile_de_credentials')
       .delete()
-      .eq('user_id', userId);
+      .eq('user_id', userId)
+      .eq('provider', 'mobile_de');
 
     if (deleteError) {
       console.error('Supabase delete error:', deleteError.message);
@@ -389,13 +398,15 @@ exports.getMobileDeStatus = async (req, res) => {
     const { data: countRows, error: countErr } = await supabase
       .from('mobile_de_listings')
       .select('mobile_ad_id', { count: 'exact', head: true })
-      .eq('user_id', userId);
+      .eq('user_id', userId)
+      .eq('provider', 'mobile_de');
     const total_listings = (countRows && Array.isArray(countRows)) ? countRows.length : (countRows?.length || null);
 
     const { data: latest } = await supabase
       .from('mobile_de_listings')
       .select('first_seen')
       .eq('user_id', userId)
+      .eq('provider', 'mobile_de')
       .order('first_seen', { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -426,6 +437,7 @@ exports.getMobileDeListings = async (req, res) => {
       .from('mobile_de_listings')
       .select('mobile_ad_id, first_seen, last_seen, details, image_xxxl_url, images')
       .eq('user_id', userId)
+      .eq('provider', 'mobile_de')
       .order('first_seen', { ascending: false })
       .limit(limit);
     if (error) return res.status(500).json({ error: error.message });

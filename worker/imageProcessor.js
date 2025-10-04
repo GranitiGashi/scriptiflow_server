@@ -125,6 +125,7 @@ async function processJob(job) {
         .from('mobile_de_credentials')
         .select('username, encrypted_password')
         .eq('user_id', job.user_id)
+        .eq('provider', 'mobile_de')
         .maybeSingle();
       let logoUrl = null;
       if (cred) {
