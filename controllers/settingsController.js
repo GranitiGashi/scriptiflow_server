@@ -64,4 +64,50 @@ exports.uploadAssets = async (req, res) => {
   }
 };
 
+exports.getProfile = async (req, res) => {
+  try {
+    const { getUserFromRequest } = require('../utils/authUser');
+    const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
+    const userId = authRes.user.id;
+    const { data, error } = await supabaseAdmin
+      .from('users_app')
+      .select('email, full_name, company_name, phone')
+      .eq('id', userId)
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json(data || {});
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Failed to fetch profile' });
+  }
+};
+
+exports.updateProfile = async (req, res) => {
+  try {
+    const { getUserFromRequest } = require('../utils/authUser');
+    const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
+    const userId = authRes.user.id;
+    const { full_name, email, company_name, phone } = req.body || {};
+
+    // Update users_app
+    const { error: upErr } = await supabaseAdmin
+      .from('users_app')
+      .update({ full_name, email, company_name, phone, updated_at: new Date().toISOString() })
+      .eq('id', userId);
+    if (upErr) return res.status(400).json({ error: upErr.message });
+
+    // If email changed, also update Supabase Auth email (optional)
+    try {
+      if (email && email !== authRes.user.email) {
+        await supabaseAdmin.auth.admin.updateUserById(userId, { email });
+      }
+    } catch (_) {}
+
+    return res.json({ status: 'updated' });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Failed to update profile' });
+  }
+};
+
 
