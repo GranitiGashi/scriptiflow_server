@@ -330,3 +330,48 @@ async function setPassword(req, res) {
 }
 
 module.exports = { login, register, refresh, inviteUser, forgotPassword, setPassword };
+
+// Change password using current session; requires current password verification
+async function changePassword(req, res) {
+  const authHeader = req.headers.authorization;
+  const refreshToken = req.headers['x-refresh-token'];
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized: Missing token' });
+  }
+  const token = authHeader.split(' ')[1];
+  const { current_password, new_password, logout_all } = req.body || {};
+  if (!current_password || !new_password || String(new_password).length < 8) {
+    return res.status(400).json({ error: 'Current and new password (min 8 chars) are required' });
+  }
+  try {
+    const supabase = require('../config/supabaseClient');
+    const supabaseAdmin = require('../config/supabaseAdmin');
+    // Ensure session
+    const { error: sessionError } = await supabase.auth.setSession({ access_token: token, refresh_token: refreshToken || null });
+    if (sessionError) return res.status(401).json({ error: 'Invalid or expired session' });
+    const { data: me } = await supabase.auth.getUser(token);
+    const userId = me?.user?.id;
+    const email = me?.user?.email;
+    if (!userId || !email) return res.status(401).json({ error: 'Invalid session' });
+
+    // Re-authenticate by attempting sign-in with current password
+    const { data: loginData, error: authErr } = await supabase.auth.signInWithPassword({ email, password: current_password });
+    if (authErr || !loginData?.user) return res.status(401).json({ error: 'Current password is incorrect' });
+
+    // Update to new password
+    const { error: updError } = await supabase.auth.updateUser({ password: new_password });
+    if (updError) return res.status(400).json({ error: updError.message });
+
+    // Optionally invalidate other sessions
+    if (logout_all === true) {
+      try {
+        await supabaseAdmin.auth.admin.signOut(loginData.user.id);
+      } catch (_) {}
+    }
+    return res.json({ status: 'password_changed' });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Internal server error' });
+  }
+}
+
+module.exports.changePassword = changePassword;
