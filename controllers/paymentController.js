@@ -686,12 +686,22 @@ exports.stripeWebhook = async (req, res) => {
                     .maybeSingle();
 
                 const existingPermissions = (userRow && userRow.permissions) || {};
+                const prevSub = existingPermissions.subscription || {};
+
+                // Throttle dunning email to once per 24 hours
+                const nowIso = new Date().toISOString();
+                const nowMs = Date.now();
+                const lastDunningIso = prevSub.lastDunningAt || null;
+                const lastDunningMs = lastDunningIso ? Date.parse(lastDunningIso) : 0;
+                const canSendDunning = !lastDunningMs || (nowMs - lastDunningMs) >= (24 * 60 * 60 * 1000);
+
                 const mergedPermissions = {
                     ...existingPermissions,
                     subscription: {
-                        ...(existingPermissions.subscription || {}),
+                        ...prevSub,
                         status: 'past_due',
-                        lastPaymentFailure: new Date().toISOString(),
+                        lastPaymentFailure: nowIso,
+                        lastDunningAt: canSendDunning ? nowIso : (prevSub.lastDunningAt || null),
                     },
                 };
 
@@ -700,15 +710,17 @@ exports.stripeWebhook = async (req, res) => {
                     .update({ permissions: mergedPermissions, updated_at: new Date().toISOString() })
                     .eq('email', email);
 
-                try {
-                    await sendEmail({
-                        to: email,
-                        subject: 'Payment failed — update your payment method',
-                        text: 'Your latest payment failed. Please update your payment method to keep your subscription active.',
-                        html: '<p>Your latest payment failed. Please update your payment method to keep your subscription active.</p>',
-                    });
-                } catch (e) {
-                    console.log('Failed to send dunning email:', e?.message || e);
+                if (canSendDunning) {
+                    try {
+                        await sendEmail({
+                            to: email,
+                            subject: 'Payment failed — update your payment method',
+                            text: 'Your latest payment failed. Please update your payment method to keep your subscription active.',
+                            html: '<p>Your latest payment failed. Please update your payment method to keep your subscription active.</p>',
+                        });
+                    } catch (e) {
+                        console.log('Failed to send dunning email:', e?.message || e);
+                    }
                 }
             }
         } else if (event.type === 'customer.subscription.deleted') {
@@ -802,5 +814,100 @@ exports.listInvoices = async (req, res) => {
     } catch (err) {
         console.error('listInvoices error:', err);
         return res.status(500).json({ error: 'Failed to fetch invoices' });
+    }
+};
+
+// List all saved card payment methods for the authenticated user
+exports.listPaymentMethods = async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Unauthorized: Missing token' });
+    }
+    const token = authHeader.split(' ')[1];
+
+    try {
+        const { data: { user }, error } = await supabase.auth.getUser(token);
+        if (error || !user) {
+            return res.status(401).json({ error: 'Invalid or expired token' });
+        }
+
+        // Resolve customer id
+        let customerId = null;
+        const { data: pm } = await supabase
+            .from('user_payment_methods')
+            .select('stripe_customer_id')
+            .eq('user_id', user.id)
+            .maybeSingle();
+        customerId = pm?.stripe_customer_id || null;
+        if (!customerId && user.email) {
+            const list = await stripe.customers.list({ email: user.email, limit: 1 });
+            if (list.data && list.data.length > 0) customerId = list.data[0].id;
+        }
+        if (!customerId) return res.json({ cards: [], default_payment_method_id: null });
+
+        const customer = await stripe.customers.retrieve(customerId);
+        const defaultPm = customer?.invoice_settings?.default_payment_method || null;
+
+        const methods = await stripe.paymentMethods.list({ customer: customerId, type: 'card' });
+        const cards = (methods.data || []).map((m) => ({
+            id: m.id,
+            brand: m.card?.brand,
+            last4: m.card?.last4,
+            exp_month: m.card?.exp_month,
+            exp_year: m.card?.exp_year,
+        }));
+
+        return res.json({ cards, default_payment_method_id: typeof defaultPm === 'string' ? defaultPm : defaultPm?.id || null });
+    } catch (err) {
+        console.error('listPaymentMethods error:', err);
+        return res.status(500).json({ error: 'Failed to list payment methods' });
+    }
+};
+
+// Delete a specific saved card payment method by id
+exports.deleteSpecificPaymentMethod = async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Unauthorized: Missing token' });
+    }
+    const token = authHeader.split(' ')[1];
+    const { paymentMethodId } = req.params;
+
+    try {
+        const { data: { user }, error } = await supabase.auth.getUser(token);
+        if (error || !user) {
+            return res.status(401).json({ error: 'Invalid or expired token' });
+        }
+
+        // Fetch stored mapping
+        const { data: row } = await supabase
+            .from('user_payment_methods')
+            .select('stripe_customer_id, payment_method_id')
+            .eq('user_id', user.id)
+            .maybeSingle();
+
+        if (!row?.stripe_customer_id) {
+            return res.status(404).json({ error: 'No Stripe customer found' });
+        }
+
+        // Detach requested method
+        await stripe.paymentMethods.detach(paymentMethodId);
+
+        // If this was the stored default, clear it in DB and on customer
+        if (row.payment_method_id === paymentMethodId) {
+            await supabase
+                .from('user_payment_methods')
+                .update({ payment_method_id: null, updated_at: new Date().toISOString() })
+                .eq('user_id', user.id);
+
+            try {
+                await stripe.customers.update(row.stripe_customer_id, { invoice_settings: { default_payment_method: null } });
+            } catch (_) {}
+        }
+
+        return res.json({ message: 'Payment method deleted' });
+    } catch (err) {
+        console.error('deleteSpecificPaymentMethod error:', err);
+        return res.status(500).json({ error: 'Failed to delete payment method' });
     }
 };

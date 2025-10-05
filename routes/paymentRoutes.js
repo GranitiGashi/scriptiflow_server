@@ -11,6 +11,8 @@ const {
   getStripeStatus,
   createCheckoutSession,
   listInvoices,
+  listPaymentMethods,
+  deleteSpecificPaymentMethod,
 } = require('../controllers/paymentController');
 
 router.post('/payment-method', savePaymentMethod);
@@ -25,5 +27,7 @@ router.post('/payment/charge-saved-card', chargeSavedCard);
 router.post('/create-payment-intent', createPaymentIntent);
 router.post('/pricing/create-checkout-session', createCheckoutSession);
 router.get('/billing/invoices', listInvoices);
+router.get('/billing/payment-methods', listPaymentMethods);
+router.delete('/billing/payment-methods/:paymentMethodId', deleteSpecificPaymentMethod);
 
 module.exports = router;
