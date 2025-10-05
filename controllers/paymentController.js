@@ -749,3 +749,58 @@ exports.stripeWebhook = async (req, res) => {
 
     res.json({ received: true });
 };
+
+// List invoices for the authenticated user (by JWT)
+exports.listInvoices = async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Unauthorized: Missing token' });
+    }
+    const token = authHeader.split(' ')[1];
+
+    try {
+        const { data: { user }, error } = await supabase.auth.getUser(token);
+        if (error || !user) {
+            return res.status(401).json({ error: 'Invalid or expired token' });
+        }
+
+        // Find Stripe customer ID for this user
+        let customerId = null;
+        const { data: pm } = await supabase
+            .from('user_payment_methods')
+            .select('stripe_customer_id')
+            .eq('user_id', user.id)
+            .maybeSingle();
+        customerId = pm?.stripe_customer_id || null;
+
+        // If no stored mapping, try lookup by email
+        if (!customerId && user.email) {
+            const list = await stripe.customers.list({ email: user.email, limit: 1 });
+            if (list.data && list.data.length > 0) customerId = list.data[0].id;
+        }
+
+        if (!customerId) {
+            return res.json({ invoices: [] });
+        }
+
+        const invoices = await stripe.invoices.list({ customer: customerId, limit: 20 });
+        const out = (invoices.data || []).map((inv) => ({
+            id: inv.id,
+            number: inv.number,
+            status: inv.status,
+            total: inv.total,
+            currency: inv.currency,
+            hosted_invoice_url: inv.hosted_invoice_url,
+            invoice_pdf: inv.invoice_pdf,
+            created: inv.created ? new Date(inv.created * 1000).toISOString() : null,
+            paid: !!inv.paid,
+            period_start: inv.period_start ? new Date(inv.period_start * 1000).toISOString() : null,
+            period_end: inv.period_end ? new Date(inv.period_end * 1000).toISOString() : null,
+        }));
+
+        return res.json({ invoices: out });
+    } catch (err) {
+        console.error('listInvoices error:', err);
+        return res.status(500).json({ error: 'Failed to fetch invoices' });
+    }
+};
