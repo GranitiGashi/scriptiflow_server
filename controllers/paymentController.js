@@ -474,17 +474,41 @@ exports.createCheckoutSession = async (req, res) => {
             pro: process.env.STRIPE_PRICE_PRO,
             premium: process.env.STRIPE_PRICE_PREMIUM,
         };
-        const price = priceMap[plan];
-        if (!price) return res.status(400).json({ error: 'Invalid plan' });
 
-        // Create/lookup customer by email if you wish; here Stripe will auto-create
+        const planNames = { basic: 'Starter', pro: 'Professional', premium: 'Enterprise' };
+
+        const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login?status=success`;
+        const cancelUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/pricing?status=cancelled`;
+
+        const price = priceMap[plan];
+
+        let lineItems;
+        if (price) {
+            // Use configured Price IDs when available
+            lineItems = [{ price, quantity: 1 }];
+        } else if (plan === 'basic' || plan === 'pro') {
+            // Fallback for local/dev when Price IDs are not configured
+            const unitAmount = plan === 'basic' ? 29900 : 59900; // cents
+            lineItems = [{
+                price_data: {
+                    currency: 'eur',
+                    product_data: { name: `ScriptiFlow ${planNames[plan]} Plan` },
+                    unit_amount: unitAmount,
+                    recurring: { interval: 'month' },
+                },
+                quantity: 1,
+            }];
+        } else {
+            return res.status(400).json({ error: 'Invalid plan' });
+        }
+
         const session = await stripe.checkout.sessions.create({
             mode: 'subscription',
             payment_method_types: ['card'],
             customer_email: email,
-            line_items: [{ price, quantity: 1 }],
-            success_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login?status=success`,
-            cancel_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/pricing?status=cancelled`,
+            line_items: lineItems,
+            success_url: successUrl,
+            cancel_url: cancelUrl,
             metadata: {
                 plan,
                 email,
