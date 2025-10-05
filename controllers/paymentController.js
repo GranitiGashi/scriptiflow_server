@@ -477,7 +477,7 @@ exports.createCheckoutSession = async (req, res) => {
 
         const planNames = { basic: 'Starter', pro: 'Professional', premium: 'Enterprise' };
 
-        const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login?status=success`;
+        const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/pricing/success`;
         const cancelUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/pricing?status=cancelled`;
 
         const price = priceMap[plan];
@@ -527,12 +527,34 @@ exports.createCheckoutSession = async (req, res) => {
 // Stripe webhook: on successful checkout, create Supabase user, set tier, send invite
 exports.stripeWebhook = async (req, res) => {
     const sig = req.headers['stripe-signature'];
+    const allowUnverified = process.env.ALLOW_UNVERIFIED_WEBHOOKS === 'true';
     let event;
     try {
-        event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+        if (sig) {
+            // Verify signature normally when provided
+            event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+        } else if (allowUnverified) {
+            // Dev-only fallback: accept unsigned JSON from Postman
+            const rawBody = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : req.body;
+            event = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;
+            console.log('[DEV] Using unverified webhook event (ALLOW_UNVERIFIED_WEBHOOKS=true)');
+        } else {
+            return res.status(400).send('Webhook Error: missing Stripe-Signature header');
+        }
     } catch (err) {
-        console.error('Webhook signature verification failed.', err.message);
-        return res.status(400).send(`Webhook Error: ${err.message}`);
+        if (allowUnverified) {
+            try {
+                const rawBody = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : req.body;
+                event = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;
+                console.log('[DEV] Fallback to unverified webhook event after signature verification failed');
+            } catch (parseErr) {
+                console.error('Webhook signature verification failed and body parse failed.', parseErr.message);
+                return res.status(400).send(`Webhook Error: ${err.message}`);
+            }
+        } else {
+            console.error('Webhook signature verification failed.', err.message);
+            return res.status(400).send(`Webhook Error: ${err.message}`);
+        }
     }
 
     try {
