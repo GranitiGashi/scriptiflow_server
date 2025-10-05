@@ -602,6 +602,145 @@ exports.stripeWebhook = async (req, res) => {
                     }
                 }
             }
+        } else if (event.type === 'invoice.payment_succeeded') {
+            const invoice = event.data.object;
+            const subscriptionId = invoice.subscription;
+            const customerId = invoice.customer;
+
+            // Resolve customer email
+            let email = invoice.customer_email || invoice.customer_details?.email || null;
+            if (!email && customerId) {
+                try {
+                    const customer = await stripe.customers.retrieve(customerId);
+                    email = customer?.email || null;
+                } catch (_) {}
+            }
+
+            if (email) {
+                // Fetch current user permissions
+                const { data: userRow } = await supabaseAdmin
+                    .from('users_app')
+                    .select('id, permissions')
+                    .eq('email', email)
+                    .maybeSingle();
+
+                // Determine plan from price ID mapping or fallback to amount mapping (dev)
+                let newPlan = null;
+                try {
+                    const line = invoice.lines?.data?.[0];
+                    const priceId = line?.price?.id;
+                    const priceToPlan = {};
+                    if (process.env.STRIPE_PRICE_BASIC) priceToPlan[process.env.STRIPE_PRICE_BASIC] = 'basic';
+                    if (process.env.STRIPE_PRICE_PRO) priceToPlan[process.env.STRIPE_PRICE_PRO] = 'pro';
+                    if (process.env.STRIPE_PRICE_PREMIUM) priceToPlan[process.env.STRIPE_PRICE_PREMIUM] = 'premium';
+                    if (priceId && priceToPlan[priceId]) newPlan = priceToPlan[priceId];
+                    if (!newPlan && typeof invoice.total === 'number') {
+                        if (invoice.total === 29900) newPlan = 'basic';
+                        if (invoice.total === 59900) newPlan = 'pro';
+                    }
+                } catch (_) {}
+
+                let currentPeriodEndIso = null;
+                try {
+                    if (subscriptionId) {
+                        const sub = await stripe.subscriptions.retrieve(subscriptionId);
+                        if (sub?.current_period_end) {
+                            currentPeriodEndIso = new Date(sub.current_period_end * 1000).toISOString();
+                        }
+                    }
+                } catch (_) {}
+
+                const existingPermissions = (userRow && userRow.permissions) || {};
+                const mergedPermissions = {
+                    ...existingPermissions,
+                    tier: newPlan || existingPermissions.tier || 'basic',
+                    subscription: {
+                        ...(existingPermissions.subscription || {}),
+                        status: 'active',
+                        stripeSubscriptionId: subscriptionId || existingPermissions.subscription?.stripeSubscriptionId || null,
+                        currentPeriodEnd: currentPeriodEndIso || existingPermissions.subscription?.currentPeriodEnd || null,
+                    },
+                };
+
+                await supabaseAdmin
+                    .from('users_app')
+                    .update({ permissions: mergedPermissions, updated_at: new Date().toISOString() })
+                    .eq('email', email);
+            }
+        } else if (event.type === 'invoice.payment_failed') {
+            const invoice = event.data.object;
+            const customerId = invoice.customer;
+            let email = invoice.customer_email || invoice.customer_details?.email || null;
+            if (!email && customerId) {
+                try {
+                    const customer = await stripe.customers.retrieve(customerId);
+                    email = customer?.email || null;
+                } catch (_) {}
+            }
+
+            if (email) {
+                const { data: userRow } = await supabaseAdmin
+                    .from('users_app')
+                    .select('id, permissions')
+                    .eq('email', email)
+                    .maybeSingle();
+
+                const existingPermissions = (userRow && userRow.permissions) || {};
+                const mergedPermissions = {
+                    ...existingPermissions,
+                    subscription: {
+                        ...(existingPermissions.subscription || {}),
+                        status: 'past_due',
+                        lastPaymentFailure: new Date().toISOString(),
+                    },
+                };
+
+                await supabaseAdmin
+                    .from('users_app')
+                    .update({ permissions: mergedPermissions, updated_at: new Date().toISOString() })
+                    .eq('email', email);
+
+                try {
+                    await sendEmail({
+                        to: email,
+                        subject: 'Payment failed — update your payment method',
+                        text: 'Your latest payment failed. Please update your payment method to keep your subscription active.',
+                        html: '<p>Your latest payment failed. Please update your payment method to keep your subscription active.</p>',
+                    });
+                } catch (e) {
+                    console.log('Failed to send dunning email:', e?.message || e);
+                }
+            }
+        } else if (event.type === 'customer.subscription.deleted') {
+            const sub = event.data.object;
+            const customerId = sub.customer;
+            let email = null;
+            try {
+                const customer = await stripe.customers.retrieve(customerId);
+                email = customer?.email || null;
+            } catch (_) {}
+
+            if (email) {
+                const { data: userRow } = await supabaseAdmin
+                    .from('users_app')
+                    .select('id, permissions')
+                    .eq('email', email)
+                    .maybeSingle();
+
+                const existingPermissions = (userRow && userRow.permissions) || {};
+                const mergedPermissions = {
+                    ...existingPermissions,
+                    subscription: {
+                        ...(existingPermissions.subscription || {}),
+                        status: 'canceled',
+                    },
+                };
+
+                await supabaseAdmin
+                    .from('users_app')
+                    .update({ permissions: mergedPermissions, updated_at: new Date().toISOString() })
+                    .eq('email', email);
+            }
         }
     } catch (e) {
         console.error('stripeWebhook error:', e);
