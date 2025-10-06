@@ -530,36 +530,50 @@ exports.getMobileDeFilters = async (req, res) => {
     if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
     const userId = authRes.user.id;
 
+    // Load dealer credentials
+    const credRes = await supabase
+      .from('mobile_de_credentials')
+      .select('username, encrypted_password')
+      .eq('user_id', userId)
+      .eq('provider', 'mobile_de')
+      .maybeSingle();
+    if (credRes.error || !credRes.data) {
+      return res.status(404).json({ error: 'No credentials found' });
+    }
+    const [iv, encryptedPassword] = credRes.data.encrypted_password.split(':');
+    const password = decrypt(encryptedPassword, iv);
+    const username = credRes.data.username;
+
     const wantedMakeRaw = typeof req.query.make === 'string' ? req.query.make : undefined;
     const wantedMake = wantedMakeRaw ? String(wantedMakeRaw).toUpperCase() : undefined;
 
-    const pageSize = 1000; // large page to reduce round-trips
-    let from = 0;
+    // Enumerate inventory directly from mobile.de API (all pages)
     const makes = new Set();
     const models = new Set();
+    const pageSize = 100;
+    let page = 1;
 
     while (true) {
-      const { data, error } = await supabase
-        .from('mobile_de_listings')
-        .select('details')
-        .eq('user_id', userId)
-        .eq('provider', 'mobile_de')
-        .range(from, from + pageSize - 1);
-      if (error) return res.status(500).json({ error: error.message });
-      if (!data || data.length === 0) break;
+      const data = await fetchMobileDeListings(username, password, {
+        'page.number': page,
+        'page.size': pageSize,
+        'sort.field': 'makeModel',
+        'sort.order': 'ASCENDING',
+      });
+      const ads = Array.isArray(data?.['search-result']?.ads?.ad)
+        ? data['search-result'].ads.ad
+        : [];
+      if (!ads.length) break;
 
-      for (const row of data) {
-        const d = row?.details || {};
-        const make = (d?.make || d?.vehicle?.make || '').toString().toUpperCase();
+      for (const ad of ads) {
+        const make = (ad?.vehicle?.make?.['@key'] || ad?.vehicle?.make || ad?.make || '').toString().toUpperCase();
+        const model = (ad?.vehicle?.model?.['@key'] || ad?.vehicle?.model || ad?.model || '').toString().toUpperCase();
         if (make) makes.add(make);
-        if (wantedMake && make === wantedMake) {
-          const model = (d?.model || d?.vehicle?.model || '').toString().toUpperCase();
-          if (model) models.add(model);
-        }
+        if (wantedMake && make === wantedMake && model) models.add(model);
       }
 
-      from += pageSize;
-      if (data.length < pageSize) break;
+      if (ads.length < pageSize) break;
+      page += 1;
     }
 
     const result = { makes: Array.from(makes).sort() };
