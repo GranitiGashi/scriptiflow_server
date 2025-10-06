@@ -368,8 +368,41 @@ exports.getUserCars = async (req, res) => {
     const password = decrypt(encryptedPassword, iv);
     const auth = 'Basic ' + Buffer.from(`${credRes.data.username}:${password}`).toString('base64');
 
+    // Build query params for pagination, sorting and search
+    const pageNumber = Math.max(1, parseInt(req.query.page || req.query['page.number'] || '1', 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.size || req.query['page.size'] || '20', 10) || 20));
+    const sortField = (req.query.sortField || req.query['sort.field'] || 'modificationTime').toString();
+    const sortOrder = (req.query.sortOrder || req.query['sort.order'] || 'DESCENDING').toString();
+
+    // Accept classification directly or build it from make/model
+    const directClassification = typeof req.query.classification === 'string' ? req.query.classification : null;
+    const vehicleClass = (req.query.vehicleClass || 'Car').toString();
+    const make = typeof req.query.make === 'string' ? req.query.make : undefined;
+    const model = typeof req.query.model === 'string' ? req.query.model : undefined;
+    const modelGroup = typeof req.query.modelGroup === 'string' ? req.query.modelGroup : undefined;
+    const q = typeof req.query.q === 'string' ? req.query.q : (typeof req.query.search === 'string' ? req.query.search : undefined);
+
+    let classification = directClassification || null;
+    if (!classification && make) {
+      // Construct classification path for cars; encoding is handled by axios
+      const base = `refdata/classes/${vehicleClass}/makes/${make.toUpperCase()}`;
+      if (model) classification = `${base}/models/${model.toUpperCase()}`;
+      else if (modelGroup) classification = `${base}/modelgroups/${modelGroup}`;
+      else classification = base;
+    }
+
+    const params = {
+      'page.number': pageNumber,
+      'page.size': pageSize,
+      'sort.field': sortField,
+      'sort.order': sortOrder,
+    };
+    if (classification) Object.assign(params, { classification });
+    if (q) Object.assign(params, { modelDescription: q });
+
     const response = await axios.get('https://services.mobile.de/search-api/search', {
       headers: { Authorization: auth, Accept: 'application/vnd.de.mobile.api+json' },
+      params,
       validateStatus: () => true,
     });
     if (response.status < 200 || response.status >= 300) {
