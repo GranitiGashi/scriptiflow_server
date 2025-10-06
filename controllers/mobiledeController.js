@@ -5,10 +5,11 @@ const { encrypt, decrypt } = require('../utils/crypto');
 const axios = require('axios');
 const supabaseAdmin = require('../config/supabaseAdmin');
 
-async function fetchMobileDeListings(username, password) {
+async function fetchMobileDeListings(username, password, params = {}) {
   const auth = 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
   const response = await axios.get('https://services.mobile.de/search-api/search', {
     headers: { Authorization: auth, Accept: 'application/vnd.de.mobile.api+json' },
+    params,
     validateStatus: () => true,
   });
   if (response.status < 200 || response.status >= 300) {
@@ -50,21 +51,35 @@ async function performMobileDeSyncForUser(userId) {
   const password = decrypt(encryptedPassword, iv);
   const username = credRes.data.username;
 
-  // Fetch current listings
-  const searchData = await fetchMobileDeListings(username, password);
-  const ads = Array.isArray(searchData?.['search-result']?.ads?.ad)
-    ? searchData['search-result'].ads.ad
-    : [];
-
+  // Fetch current listings across all pages (paginate)
+  const pageSize = 100;
+  let page = 1;
+  let totalSeen = 0;
   let newCount = 0;
-  for (const ad of ads) {
+
+  // Iterate pages until fewer than pageSize results are returned
+  // Sort by newest to prioritize recent changes
+  while (true) {
+    const searchData = await fetchMobileDeListings(username, password, {
+      'page.number': page,
+      'page.size': pageSize,
+      'sort.field': 'modificationTime',
+      'sort.order': 'DESCENDING',
+    });
+    const ads = Array.isArray(searchData?.['search-result']?.ads?.ad)
+      ? searchData['search-result'].ads.ad
+      : [];
+    if (!ads.length) break;
+    totalSeen += ads.length;
+
+    for (const ad of ads) {
     const mobileAdId = String(ad.id || ad.mobileAdId || ad['mobile-ad-id'] || '').trim();
     if (!mobileAdId) continue;
 
-    // Upsert only if new
+    // Upsert only if new; if exists, update missing details
     const { data: existing } = await supabase
       .from('mobile_de_listings')
-      .select('mobile_ad_id')
+      .select('mobile_ad_id, details')
       .eq('user_id', userId)
       .eq('provider', 'mobile_de')
       .eq('mobile_ad_id', mobileAdId)
@@ -77,6 +92,21 @@ async function performMobileDeSyncForUser(userId) {
         .eq('user_id', userId)
         .eq('provider', 'mobile_de')
         .eq('mobile_ad_id', mobileAdId);
+      // If details missing or incomplete, update with best-effort info from ad
+      try {
+        const existingDetails = existing?.details || null;
+        const existingMake = (existingDetails && (existingDetails.make || existingDetails?.vehicle?.make)) ? String(existingDetails.make || existingDetails?.vehicle?.make) : '';
+        const existingModel = (existingDetails && (existingDetails.model || existingDetails?.vehicle?.model)) ? String(existingDetails.model || existingDetails?.vehicle?.model) : '';
+        const merged = { ...(existingDetails || {}), make: existingMake || (ad.make || ad?.vehicle?.make || ''), model: existingModel || (ad.model || ad?.vehicle?.model || '') };
+        if (!existingDetails || !existingMake || !existingModel) {
+          await supabase
+            .from('mobile_de_listings')
+            .update({ details: merged })
+            .eq('user_id', userId)
+            .eq('provider', 'mobile_de')
+            .eq('mobile_ad_id', mobileAdId);
+        }
+      } catch {}
       continue;
     }
 
@@ -93,13 +123,21 @@ async function performMobileDeSyncForUser(userId) {
       // Continue even if details fail; we still store the ad id
     }
 
+    // Merge minimal fields to ensure filters can be built even if details call fails
+    const mergedDetails = {
+      ...(details || {}),
+      make: (details?.make || details?.vehicle?.make || ad.make || ad?.vehicle?.make || null),
+      model: (details?.model || details?.vehicle?.model || ad.model || ad?.vehicle?.model || null),
+      detailPageUrl: (details?.detailPageUrl || ad.detailPageUrl || null),
+    };
+
     await supabase
       .from('mobile_de_listings')
       .insert({
         user_id: userId,
         provider: 'mobile_de',
         mobile_ad_id: mobileAdId,
-        details,
+        details: mergedDetails,
         image_xxxl_url,
         images: imagesArr.length ? imagesArr : null,
         first_seen: new Date().toISOString(),
@@ -140,7 +178,11 @@ async function performMobileDeSyncForUser(userId) {
           },
         });
     }
-    newCount += 1;
+      newCount += 1;
+    }
+
+    if (ads.length < pageSize) break;
+    page += 1;
   }
 
   // Update last_sync_at
@@ -150,7 +192,7 @@ async function performMobileDeSyncForUser(userId) {
     .eq('user_id', userId)
     .eq('provider', 'mobile_de');
 
-  return { synced: true, new_listings: newCount, total_seen: ads.length };
+  return { synced: true, new_listings: newCount, total_seen: totalSeen };
 }
 
 // Fire-and-forget background sync with minimal throttling
