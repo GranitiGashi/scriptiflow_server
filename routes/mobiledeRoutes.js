@@ -11,6 +11,7 @@ router.get('/get-user-cars', mobiledeController.getUserCars);
 router.post('/mobilede/sync-now', mobiledeController.syncMobileDe);
 router.get('/mobilede/status', mobiledeController.getMobileDeStatus);
 router.get('/mobilede/listings', mobiledeController.getMobileDeListings);
+router.get('/mobilede/filters', mobiledeController.getMobileDeFilters);
 router.post('/mobilede/seed-dummy', mobiledeController.seedDummyListing);
 
 module.exports = router;

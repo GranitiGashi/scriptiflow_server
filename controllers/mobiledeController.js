@@ -481,6 +481,54 @@ exports.getMobileDeListings = async (req, res) => {
   }
 };
 
+// Distinct makes and models for current dealership (from cached listings)
+exports.getMobileDeFilters = async (req, res) => {
+  try {
+    const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
+    const userId = authRes.user.id;
+
+    const wantedMakeRaw = typeof req.query.make === 'string' ? req.query.make : undefined;
+    const wantedMake = wantedMakeRaw ? String(wantedMakeRaw).toUpperCase() : undefined;
+
+    const pageSize = 1000; // large page to reduce round-trips
+    let from = 0;
+    const makes = new Set();
+    const models = new Set();
+
+    while (true) {
+      const { data, error } = await supabase
+        .from('mobile_de_listings')
+        .select('details')
+        .eq('user_id', userId)
+        .eq('provider', 'mobile_de')
+        .range(from, from + pageSize - 1);
+      if (error) return res.status(500).json({ error: error.message });
+      if (!data || data.length === 0) break;
+
+      for (const row of data) {
+        const d = row?.details || {};
+        const make = (d?.make || d?.vehicle?.make || '').toString().toUpperCase();
+        if (make) makes.add(make);
+        if (wantedMake && make === wantedMake) {
+          const model = (d?.model || d?.vehicle?.model || '').toString().toUpperCase();
+          if (model) models.add(model);
+        }
+      }
+
+      from += pageSize;
+      if (data.length < pageSize) break;
+    }
+
+    const result = { makes: Array.from(makes).sort() };
+    if (wantedMake) Object.assign(result, { models: Array.from(models).sort() });
+    return res.json(result);
+  } catch (err) {
+    console.error('getMobileDeFilters error:', err);
+    return res.status(500).json({ error: 'Failed to get filters', details: err.message });
+  }
+};
+
 // Seed a dummy listing and enqueue social jobs (testing helper)
 exports.seedDummyListing = async (req, res) => {
   try {
