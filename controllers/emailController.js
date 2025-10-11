@@ -387,7 +387,7 @@ exports.gmailCallback = async (req, res) => {
       updated_at: new Date().toISOString(),
     };
     await supabaseAdmin.from('email_credentials').upsert({ ...record, deleted_at: null }, { onConflict: 'user_id,provider' });
-    return res.redirect(`${FRONTEND_URL}/dashboard/social-media`);
+    return res.redirect(`${FRONTEND_URL}/dashboard/integrations`);
   } catch (e) {
     return res.redirect(`${FRONTEND_URL}/connect?status=error&message=${encodeURIComponent('Failed to connect Gmail')}`);
   }
@@ -460,7 +460,7 @@ exports.outlookCallback = async (req, res) => {
       updated_at: new Date().toISOString(),
     };
     await supabaseAdmin.from('email_credentials').upsert({ ...record, deleted_at: null }, { onConflict: 'user_id,provider' });
-    return res.redirect(`${FRONTEND_URL}/dashboard/social-media`);
+    return res.redirect(`${FRONTEND_URL}/dashboard/integrations`);
   } catch (e) {
     console.error('Outlook token error:', e.response?.data || e.message);
     const msg = e.response?.data?.error_description || e.response?.data?.error || e.message || 'Failed to connect Outlook';

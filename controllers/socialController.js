@@ -214,7 +214,7 @@ exports.fbCallback = async (req, res) => {
       console.log('Skipping Instagram account save: No ig_id found');
     }
 
-    return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/connect?status=success`);
+    return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/integrations`);
   } catch (err) {
     console.error('Facebook callback error:', err.response?.data || err.message);
     return res.redirect(
