@@ -19,6 +19,7 @@ const settingsRoutes = require('./routes/settingsRoutes');
 const creditsRoutes = require('./routes/creditsRoutes');
 const paymentController = require('./controllers/paymentController');
 const { runOnce: runImageWorkerOnce } = require('./worker/imageProcessor');
+const { runOnce: runSocialWorkerOnce } = require('./worker/socialPoster');
 
 
 const app = express();
@@ -84,8 +85,12 @@ if (process.env.RUN_INLINE_WORKER === 'true') {
     if (busy) return;
     busy = true;
     try {
-      const batch = parseInt(process.env.IMAGE_WORKER_BATCH || '3', 10);
-      await runImageWorkerOnce(batch);
+      const imgBatch = parseInt(process.env.IMAGE_WORKER_BATCH || '3', 10);
+      const socialBatch = parseInt(process.env.SOCIAL_WORKER_BATCH || '5', 10);
+      await Promise.all([
+        runImageWorkerOnce(imgBatch),
+        runSocialWorkerOnce(socialBatch),
+      ]);
     } catch (_) {}
     busy = false;
   }, intervalMs);
