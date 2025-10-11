@@ -678,7 +678,7 @@ exports.seedDummyListing = async (req, res) => {
 
     const { mobile_ad_id, images = [], make = 'MERCEDES-BENZ', model = 'C 43 AMG', detail_url, caption } = req.body || {};
     const adId = String(mobile_ad_id || `dummy-${Date.now()}`);
-    const imagesArr = Array.isArray(images) ? images.filter(Boolean).slice(0, 10) : [];
+    const imagesArr = Array.isArray(images) ? images.filter(Boolean).slice(0, 50) : [];
     const image_xxxl_url = imagesArr[0] || null;
 
     await supabase
