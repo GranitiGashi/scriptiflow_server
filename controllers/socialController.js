@@ -28,11 +28,7 @@ exports.getFbLoginUrl = async (req, res) => {
       return res.status(401).json({ error: 'Unauthorized: Invalid token' });
     }
 
-    const { user_id } = req.query;
-    if (!user_id || user_id !== user.id) {
-      console.error('User ID mismatch in getFbLoginUrl:', { token_user_id: user.id, query_user_id: user_id });
-      return res.status(403).json({ error: 'Forbidden: User ID mismatch' });
-    }
+    const user_id = req.query.user_id || user.id;
 
     const stateData = { user_id, nonce: uuidv4() };
     const state = encodeURIComponent(JSON.stringify(stateData));

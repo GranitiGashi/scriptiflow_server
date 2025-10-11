@@ -441,7 +441,8 @@ exports.outlookCallback = async (req, res) => {
     let accountEmail = null;
     try {
       const me = await axios.get('https://graph.microsoft.com/v1.0/me', { headers: { Authorization: `Bearer ${accessToken}` } });
-      accountEmail = me.data?.mail || me.data?.userPrincipalName || null;
+      // Prefer real mailbox address; fallback to otherMails; avoid guest UPN like name#EXT#@tenant
+      accountEmail = me.data?.mail || (Array.isArray(me.data?.otherMails) && me.data.otherMails[0]) || me.data?.userPrincipalName || null;
     } catch (_) {}
 
     const accEnc = encrypt(accessToken);
