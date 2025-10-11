@@ -3,6 +3,8 @@ const { getUserByEmail } = require('../models/userModel');
 const supabase = require('../config/supabaseClient');
 const supabaseAdmin = require('../config/supabaseAdmin');
 const { sendEmail } = require('../utils/email');
+const { validatePasswordStrength } = require('../utils/passwordPolicy');
+const { sign: signState, verify: verifyState } = require('../utils/stateToken');
 
 async function register(req, res) {
   const authHeader = req.headers.authorization;
@@ -226,7 +228,16 @@ async function inviteUser(req, res) {
 
     // Send branded email with action_link
     try {
-      const actionLink = linkData?.properties?.action_link;
+      let actionLink = linkData?.properties?.action_link;
+      try {
+        const FRONTEND_URL = process.env.FRONTEND_URL;
+        const secret = process.env.STATE_TOKEN_SECRET || process.env.SUPABASE_JWT_SECRET || 'dev-secret';
+        const state = signState({ purpose: 'invite', email, exp: Date.now() + 60 * 60 * 1000 }, secret);
+        const frontendUrl = new URL(`${FRONTEND_URL}/auth/new-password`);
+        frontendUrl.searchParams.set('mode', 'invite');
+        frontendUrl.searchParams.set('state', state);
+        actionLink = frontendUrl.toString();
+      } catch (_) {}
       console.log('actionLink', actionLink);
       const { renderInviteEmail } = require('../utils/emailTemplates/invite');
       const html = renderInviteEmail({ actionLink, recipientName: full_name });
@@ -258,10 +269,24 @@ async function forgotPassword(req, res) {
       email,
       options: { redirectTo: `${FRONTEND_URL}/auth/new-password?mode=recovery` },
     });
-    if (error) return res.status(400).json({ error: error.message });
+    if (error) {
+      // Avoid user enumeration: always return success shape
+      await new Promise(r => setTimeout(r, 300));
+      return res.json({ status: 'sent' });
+    }
 
     try {
-      const actionLink = data?.properties?.action_link;
+      let actionLink = data?.properties?.action_link;
+      try {
+        const FRONTEND_URL = process.env.FRONTEND_URL;
+        // Attach short-lived HMAC state to mitigate link tampering (10 min)
+        const secret = process.env.STATE_TOKEN_SECRET || process.env.SUPABASE_JWT_SECRET || 'dev-secret';
+        const state = signState({ purpose: 'recovery', email, exp: Date.now() + 10 * 60 * 1000 }, secret);
+        const frontendUrl = new URL(`${FRONTEND_URL}/auth/new-password`);
+        frontendUrl.searchParams.set('mode', 'recovery');
+        frontendUrl.searchParams.set('state', state);
+        actionLink = frontendUrl.toString();
+      } catch (_) {}
       console.log('actionLink', actionLink);
       const { renderRecoveryEmail } = require('../utils/emailTemplates/recovery');
       const html = renderRecoveryEmail({ actionLink });
@@ -274,9 +299,12 @@ async function forgotPassword(req, res) {
     } catch (e) {
       console.log('Recovery email skipped/failed:', e?.message || e);
     }
+    // Always return success regardless of whether email exists
+    await new Promise(r => setTimeout(r, 150));
     return res.json({ status: 'sent' });
   } catch (err) {
-    return res.status(500).json({ error: err.message || 'Internal server error' });
+    // Do not leak errors for enumeration; return generic
+    return res.json({ status: 'sent' });
   }
 }
 
@@ -288,9 +316,27 @@ async function setPassword(req, res) {
     return res.status(401).json({ error: 'Unauthorized: Missing token' });
   }
   const token = authHeader.split(' ')[1];
-  const { password, mode } = req.body || {};
-  if (!password || password.length < 8) {
-    return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  const { password, mode, state } = req.body || {};
+  // Verify state if provided
+  try {
+    if (state) {
+      const secret = process.env.STATE_TOKEN_SECRET || process.env.SUPABASE_JWT_SECRET || 'dev-secret';
+      const result = verifyState(state, secret);
+      if (!result.valid) return res.status(400).json({ error: 'Invalid or expired state' });
+      if (mode && result.payload?.purpose !== mode) return res.status(400).json({ error: 'Invalid state purpose' });
+    }
+  } catch (_) {}
+  // Check strength
+  try {
+    const { data: me0 } = await supabase.auth.getUser(token);
+    const email = me0?.user?.email;
+    const { validatePasswordStrengthAsync } = require('../utils/passwordPolicy');
+    const strength = await validatePasswordStrengthAsync(password, email);
+    if (!strength.valid) return res.status(400).json({ error: strength.message });
+  } catch (_) {
+    if (!password || password.length < 12) {
+      return res.status(400).json({ error: 'Password must be at least 12 characters' });
+    }
   }
   try {
     const { error: sessionError } = await supabase.auth.setSession({ access_token: token, refresh_token: refreshToken || null });
@@ -321,6 +367,8 @@ async function setPassword(req, res) {
           .from('users_app')
           .update({ password_set_at: new Date().toISOString() })
           .eq('id', userId2);
+        // Invalidate other sessions for safety
+        try { await supabaseAdmin.auth.admin.signOut(userId2); } catch (_) {}
       }
     } catch (_) {}
     return res.json({ status: 'password_set' });
@@ -340,8 +388,8 @@ async function changePassword(req, res) {
   }
   const token = authHeader.split(' ')[1];
   const { current_password, new_password, logout_all } = req.body || {};
-  if (!current_password || !new_password || String(new_password).length < 8) {
-    return res.status(400).json({ error: 'Current and new password (min 8 chars) are required' });
+  if (!current_password || !new_password) {
+    return res.status(400).json({ error: 'Current and new password are required' });
   }
   try {
     const supabase = require('../config/supabaseClient');
@@ -357,6 +405,14 @@ async function changePassword(req, res) {
     // Re-authenticate by attempting sign-in with current password
     const { data: loginData, error: authErr } = await supabase.auth.signInWithPassword({ email, password: current_password });
     if (authErr || !loginData?.user) return res.status(401).json({ error: 'Current password is incorrect' });
+
+    // Strong password policy and not equal to current
+    if (current_password === new_password) {
+      return res.status(400).json({ error: 'New password must differ from current password' });
+    }
+    const { validatePasswordStrengthAsync } = require('../utils/passwordPolicy');
+    const strength = await validatePasswordStrengthAsync(new_password, email);
+    if (!strength.valid) return res.status(400).json({ error: strength.message });
 
     // Update to new password
     const { error: updError } = await supabase.auth.updateUser({ password: new_password });
