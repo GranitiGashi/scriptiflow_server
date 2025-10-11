@@ -181,9 +181,9 @@ exports.connectAutoScout24 = async (req, res) => {
     const userId = authRes.user.id;
 
     const { iv, encryptedData } = encrypt(password);
-    const upsertRes = await supabase
+  const upsertRes = await supabase
       .from('mobile_de_credentials')
-      .upsert({ user_id: userId, provider: 'autoscout24', username, encrypted_password: `${iv}:${encryptedData}`, updated_at: new Date().toISOString() }, { onConflict: ['user_id', 'provider'] });
+      .upsert({ user_id: userId, provider: 'autoscout24', username, encrypted_password: `${iv}:${encryptedData}`, updated_at: new Date().toISOString(), deleted_at: null }, { onConflict: ['user_id', 'provider'] });
     if (upsertRes.error) {
       return res.status(500).json({ error: 'Failed to save credentials', details: upsertRes.error.message });
     }
@@ -205,6 +205,7 @@ exports.getAutoScout24Credentials = async (req, res) => {
       .select('username, encrypted_password')
       .eq('user_id', userId)
       .eq('provider', 'autoscout24')
+      .is('deleted_at', null)
       .maybeSingle();
     if (error) return res.status(500).json({ error: error.message });
     if (!data) return res.status(404).json({ error: 'No credentials found' });
@@ -230,7 +231,7 @@ exports.editAutoScout24Credentials = async (req, res) => {
     const { iv, encryptedData } = encrypt(password);
     const { error } = await supabase
       .from('mobile_de_credentials')
-      .update({ username, encrypted_password: `${iv}:${encryptedData}`, updated_at: new Date().toISOString() })
+      .update({ username, encrypted_password: `${iv}:${encryptedData}`, updated_at: new Date().toISOString(), deleted_at: null })
       .eq('user_id', userId)
       .eq('provider', 'autoscout24');
     if (error) return res.status(500).json({ error: error.message });
@@ -249,7 +250,7 @@ exports.deleteAutoScout24Credentials = async (req, res) => {
 
     const { error } = await supabase
       .from('mobile_de_credentials')
-      .delete()
+      .update({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
       .eq('user_id', userId)
       .eq('provider', 'autoscout24');
     if (error) return res.status(500).json({ error: error.message });

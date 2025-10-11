@@ -67,7 +67,7 @@ exports.connectWhatsApp = async (req, res) => {
     };
     const { error } = await supabaseAdmin
       .from('whatsapp_credentials')
-      .upsert(record, { onConflict: 'user_id' });
+      .upsert({ ...record, deleted_at: null }, { onConflict: 'user_id' });
     if (error) return res.status(500).json({ error: 'Failed to save credentials', details: error.message });
     return res.json({ status: 'connected' });
   } catch (err) {
@@ -88,6 +88,7 @@ exports.getCredentials = async (req, res) => {
       .from('whatsapp_credentials')
       .select('waba_phone_number_id, waba_business_account_id, connected_at')
       .eq('user_id', user.id)
+      .is('deleted_at', null)
       .maybeSingle();
     if (error) return res.status(500).json({ error: error.message });
     if (!data) return res.status(404).json({ error: 'Not connected' });
@@ -165,7 +166,7 @@ exports.disconnect = async (req, res) => {
     const user = authRes.user;
     const { error } = await supabaseAdmin
       .from('whatsapp_credentials')
-      .delete()
+      .update({ deleted_at: new Date().toISOString() })
       .eq('user_id', user.id);
     if (error) return res.status(500).json({ error: error.message });
     return res.json({ status: 'disconnected' });

@@ -386,7 +386,7 @@ exports.gmailCallback = async (req, res) => {
       connected_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-    await supabaseAdmin.from('email_credentials').upsert(record, { onConflict: 'user_id,provider' });
+    await supabaseAdmin.from('email_credentials').upsert({ ...record, deleted_at: null }, { onConflict: 'user_id,provider' });
     return res.redirect(`${FRONTEND_URL}/dashboard/social-media`);
   } catch (e) {
     return res.redirect(`${FRONTEND_URL}/connect?status=error&message=${encodeURIComponent('Failed to connect Gmail')}`);
@@ -458,7 +458,7 @@ exports.outlookCallback = async (req, res) => {
       connected_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-    await supabaseAdmin.from('email_credentials').upsert(record, { onConflict: 'user_id,provider' });
+    await supabaseAdmin.from('email_credentials').upsert({ ...record, deleted_at: null }, { onConflict: 'user_id,provider' });
     return res.redirect(`${FRONTEND_URL}/dashboard/social-media`);
   } catch (e) {
     console.error('Outlook token error:', e.response?.data || e.message);
@@ -472,7 +472,7 @@ exports.getStatus = async (req, res) => {
     const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
     if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
     const user = authRes.user;
-    const creds = await getEmailCredentials(user.id);
+    const creds = (await getEmailCredentials(user.id)).filter(c => !c.deleted_at);
     const gmail = creds.find((c) => c.provider === 'gmail') || null;
     const outlook = creds.find((c) => c.provider === 'outlook') || null;
     return res.json({
@@ -493,7 +493,7 @@ exports.disconnect = async (req, res) => {
     if (!['gmail', 'outlook'].includes(provider)) return res.status(400).json({ error: 'Invalid provider' });
     const { error } = await supabaseAdmin
       .from('email_credentials')
-      .delete()
+      .update({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
       .eq('user_id', user.id)
       .eq('provider', provider);
     if (error) return res.status(500).json({ error: error.message });

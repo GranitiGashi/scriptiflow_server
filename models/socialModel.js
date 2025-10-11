@@ -1,6 +1,6 @@
 const supabase = require('../config/supabaseClient');
 
-// Upsert social record (insert or update)
+// Upsert social record (insert or update) and clear soft-deletion if present
 async function upsertSocialRecord({ user_id, provider, account_id, access_token, metadata = {} }) {
   const { data: existing, error: fetchError } = await supabase
     .from('social_accounts')
@@ -20,7 +20,8 @@ async function upsertSocialRecord({ user_id, provider, account_id, access_token,
       .update({
         access_token,
         metadata,
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
+        deleted_at: null,
       })
       .eq('id', existing.id);
 
@@ -35,6 +36,7 @@ async function upsertSocialRecord({ user_id, provider, account_id, access_token,
       metadata,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
+      deleted_at: null,
     });
 
     if (insertError) throw insertError;
@@ -46,7 +48,8 @@ async function getSocialAccountsByUserId(user_id) {
   const { data, error } = await supabase
     .from('social_accounts')
     .select('*')
-    .eq('user_id', user_id);
+    .eq('user_id', user_id)
+    .is('deleted_at', null);
 
   if (error) throw error;
   return data;

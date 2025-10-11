@@ -285,6 +285,27 @@ exports.getSocialAccounts = async (req, res) => {
   }
 };
 
+// Soft delete social account
+exports.disconnectSocial = async (req, res) => {
+  try {
+    const { user, error: tokenError } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (tokenError || !user) return res.status(401).json({ error: 'Unauthorized: Invalid token' });
+    const provider = (req.body?.provider || req.query?.provider || '').toLowerCase();
+    if (!['facebook', 'instagram'].includes(provider)) return res.status(400).json({ error: 'Invalid provider' });
+    const accountId = (req.body?.account_id || req.query?.account_id || '').toString();
+    // If accountId not specified, soft delete all for that provider
+    const q = supabase.from('social_accounts')
+      .update({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq('user_id', user.id)
+      .eq('provider', provider);
+    const { error } = accountId ? await q.eq('account_id', accountId) : await q;
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ disconnected: true });
+  } catch (e) {
+    return res.status(500).json({ error: e.message || 'Failed to disconnect social account' });
+  }
+};
+
 exports.getSocialAccountsByEmail = async (req, res) => {
   const authHeader = req.headers.authorization;
 

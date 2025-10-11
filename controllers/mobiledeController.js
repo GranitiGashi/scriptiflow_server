@@ -42,6 +42,7 @@ async function performMobileDeSyncForUser(userId) {
     .select('username, encrypted_password')
     .eq('user_id', userId)
     .eq('provider', 'mobile_de')
+    .is('deleted_at', null)
     .maybeSingle();
   if (credRes.error || !credRes.data) {
     return { synced: false, new_listings: 0, total_seen: 0, reason: 'no_credentials' };
@@ -253,7 +254,7 @@ exports.connectMobile = async (req, res) => {
     const upsertRes = await supabase
       .from('mobile_de_credentials')
       .upsert(
-        { user_id: userId, provider: 'mobile_de', username, encrypted_password: `${iv}:${encryptedData}` },
+        { user_id: userId, provider: 'mobile_de', username, encrypted_password: `${iv}:${encryptedData}`, deleted_at: null },
         { onConflict: ['user_id', 'provider'] }
       );
 
@@ -291,6 +292,7 @@ exports.getMobileCredentials = async (req, res) => {
       .select('username, encrypted_password')
       .eq('user_id', userId)
       .eq('provider', 'mobile_de')
+      .is('deleted_at', null)
       .maybeSingle();
 
     if (selectRes.error) {
@@ -339,7 +341,7 @@ exports.editMobileCredentials = async (req, res) => {
 
     const updateRes = await supabase
       .from('mobile_de_credentials')
-      .update({ username, encrypted_password: `${iv}:${encryptedData}` })
+      .update({ username, encrypted_password: `${iv}:${encryptedData}`, deleted_at: null })
       .eq('user_id', userId)
       .eq('provider', 'mobile_de');
 
@@ -374,7 +376,7 @@ exports.deleteMobileCredentials = async (req, res) => {
 
     const { error: deleteError } = await supabase
       .from('mobile_de_credentials')
-      .delete()
+      .update({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
       .eq('user_id', userId)
       .eq('provider', 'mobile_de');
 

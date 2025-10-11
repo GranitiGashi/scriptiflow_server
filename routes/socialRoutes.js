@@ -10,6 +10,7 @@ router.get('/fb/callback', socialController.fbCallback);
 // Protect these routes with auth middleware if you want:
 router.get('/social-accounts', socialController.getSocialAccounts);
 router.get('/social-accounts-by-email', socialController.getSocialAccountsByEmail);
+router.post('/social/disconnect', socialController.disconnectSocial);
 
 module.exports = router;
 
