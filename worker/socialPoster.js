@@ -38,12 +38,28 @@ async function postToFacebook({ user_id, caption, images }) {
       params.set('access_token', token);
       mediaFbids.forEach((id, idx) => params.set(`attached_media[${idx}]`, JSON.stringify({ media_fbid: id })));
       const res = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/feed`, params);
-      return res.data;
+      const postId = res.data?.id;
+      let permalink_url = null;
+      if (postId) {
+        try {
+          const pr = await axios.get(`https://graph.facebook.com/v19.0/${postId}`, { params: { fields: 'permalink_url', access_token: token } });
+          permalink_url = pr.data?.permalink_url || null;
+        } catch (_) {}
+      }
+      return { id: postId, permalink_url };
     } else {
       const params = { message: caption || '', access_token: token };
       if (mediaFbids[0]) params.object_attachment = mediaFbids[0];
       const res = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/feed`, null, { params });
-      return res.data;
+      const postId = res.data?.id;
+      let permalink_url = null;
+      if (postId) {
+        try {
+          const pr = await axios.get(`https://graph.facebook.com/v19.0/${postId}`, { params: { fields: 'permalink_url', access_token: token } });
+          permalink_url = pr.data?.permalink_url || null;
+        } catch (_) {}
+      }
+      return { id: postId, permalink_url };
     }
   } catch (e) {
     const m = e?.response?.data ? JSON.stringify(e.response.data) : (e?.message || String(e));
@@ -97,7 +113,15 @@ async function postToInstagram({ user_id, caption, images }) {
     const publish = await axios.post(`https://graph.facebook.com/v19.0/${igId}/media_publish`, null, {
       params: { creation_id, access_token: token },
     });
-    return publish.data;
+    const mediaId = publish.data?.id || creation_id;
+    let permalink = null;
+    if (mediaId) {
+      try {
+        const pr = await axios.get(`https://graph.facebook.com/v19.0/${mediaId}`, { params: { fields: 'permalink', access_token: token } });
+        permalink = pr.data?.permalink || null;
+      } catch (_) {}
+    }
+    return { id: mediaId, permalink };
   }
 
   // Carousel: create children first
@@ -121,7 +145,15 @@ async function postToInstagram({ user_id, caption, images }) {
   const publish = await axios.post(`https://graph.facebook.com/v19.0/${igId}/media_publish`, null, {
     params: { creation_id, access_token: token },
   });
-  return publish.data;
+  const mediaId = publish.data?.id || creation_id;
+  let permalink = null;
+  if (mediaId) {
+    try {
+      const pr = await axios.get(`https://graph.facebook.com/v19.0/${mediaId}`, { params: { fields: 'permalink', access_token: token } });
+      permalink = pr.data?.permalink || null;
+    } catch (_) {}
+  }
+  return { id: mediaId, permalink };
 }
 
 async function generateCaptionDE({ make, model }) {
