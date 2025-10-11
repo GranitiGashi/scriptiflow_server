@@ -502,8 +502,7 @@ exports.getMobileDeAdDetails = async (req, res) => {
       const imgs = Array.isArray(ad?.images) ? ad.images : [];
       const images = imgs
         .map((i) => i?.xxxl || i?.xxl || i?.xl || i?.l || i?.m || i?.s)
-        .filter(Boolean)
-        .slice(0, 10);
+        .filter(Boolean);
       return res.json({
         mobile_ad_id: mobileAdId,
         images,
@@ -526,7 +525,7 @@ exports.getMobileDeAdDetails = async (req, res) => {
       const details = row.details || {};
       const listImages = Array.isArray(row.images) ? row.images : [];
       const primary = row.image_xxxl_url || null;
-      const images = (listImages.length ? listImages : (primary ? [primary] : [])).slice(0, 10);
+      const images = (listImages.length ? listImages : (primary ? [primary] : []));
       return res.json({
         mobile_ad_id: mobileAdId,
         images,
