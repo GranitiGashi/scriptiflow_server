@@ -731,3 +731,6 @@ exports.syncMobileDe = async (req, res) => {
     return res.status(500).json({ error: 'Failed to sync mobile.de', details: err.message });
   }
 };
+
+// Expose for worker
+exports.performMobileDeSyncForUser = performMobileDeSyncForUser;

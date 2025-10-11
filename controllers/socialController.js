@@ -414,3 +414,29 @@ exports.queueSocialPost = async (req, res) => {
     return res.status(500).json({ error: err.message || 'Failed to queue social post' });
   }
 };
+
+// List social posts by status with pagination
+exports.listSocialPosts = async (req, res) => {
+  try {
+    const { user, error: tokenError } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (tokenError || !user) return res.status(401).json({ error: 'Unauthorized' });
+    const status = (req.query.status || '').toString().toLowerCase();
+    const allowed = ['queued', 'posting', 'success', 'failed'];
+    const filter = allowed.includes(status) ? status : undefined;
+    const limit = Math.min(parseInt(req.query.limit || '50', 10) || 50, 200);
+    const offset = Math.max(parseInt(req.query.offset || '0', 10) || 0, 0);
+
+    let q = supabase
+      .from('social_post_jobs')
+      .select('id, platform, mobile_ad_id, payload, status, attempts, error, created_at, updated_at')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+    if (filter) q = q.eq('status', filter);
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json(data || []);
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Failed to list posts' });
+  }
+};

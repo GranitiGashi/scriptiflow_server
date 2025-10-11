@@ -13,6 +13,7 @@ router.get('/social-accounts-by-email', socialController.getSocialAccountsByEmai
 router.post('/social/disconnect', socialController.disconnectSocial);
 router.post('/social/generate-caption', socialController.generateCaption);
 router.post('/social/queue-post', socialController.queueSocialPost);
+router.get('/social/posts', socialController.listSocialPosts);
 
 module.exports = router;
 
