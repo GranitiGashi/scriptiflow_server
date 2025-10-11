@@ -5,6 +5,8 @@ const supabase = require('../config/supabaseClient');
 const { getUserFromRequest } = require('../utils/authUser');
 const { upsertSocialRecord, getSocialAccountsByUserId, getUserByEmail } = require('../models/socialModel');
 const { upsertFacebookUserToken } = require('../models/socialTokenModel');
+const openai = require('../utils/openaiClient');
+const { runOnce } = require('../worker/socialPoster');
 require('dotenv').config();
 
 const FB_APP_ID = process.env.FACEBOOK_APP_ID;
@@ -350,5 +352,65 @@ exports.getSocialAccountsByEmail = async (req, res) => {
   } catch (err) {
     console.error('getSocialAccountsByEmail error:', err.message);
     return res.status(500).json({ error: 'Internal server error', details: err.message });
+  }
+};
+
+// Generate a social caption using OpenAI (DE), with fallback to make+model
+exports.generateCaption = async (req, res) => {
+  try {
+    const { make, model, language } = req.body || {};
+    const lang = (language || 'de').toLowerCase();
+    const isDe = lang.startsWith('de');
+    const prompt = isDe
+      ? `Schreibe eine kurze, freundliche Bildunterschrift auf Deutsch für ein Auto-Angebot. Marke: ${make || ''}. Modell: ${model || ''}. Maximal 30 Wörter.`
+      : `Write a short, friendly social caption in English for a car listing. Make: ${make || ''}. Model: ${model || ''}. Max 30 words.`;
+    try {
+      const resp = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: 'You are a helpful marketing assistant for car dealerships.' },
+          { role: 'user', content: prompt },
+        ],
+        temperature: 0.7,
+        max_tokens: 90,
+      });
+      const text = resp.choices?.[0]?.message?.content?.trim();
+      return res.json({ caption: text || `${make || ''} ${model || ''}`.trim() });
+    } catch (e) {
+      return res.json({ caption: `${make || ''} ${model || ''}`.trim() });
+    }
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Failed to generate caption' });
+  }
+};
+
+// Queue a social post job (fb/ig) for a specific mobile.de ad payload
+exports.queueSocialPost = async (req, res) => {
+  try {
+    const { user, error: tokenError } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (tokenError || !user) return res.status(401).json({ error: 'Unauthorized: Invalid token' });
+
+    const { platform, mobile_ad_id, images, caption, detail_url, make, model } = req.body || {};
+    if (!platform || !['facebook', 'instagram'].includes(String(platform))) {
+      return res.status(400).json({ error: 'Invalid platform' });
+    }
+    if (!mobile_ad_id) return res.status(400).json({ error: 'mobile_ad_id is required' });
+
+    const payload = {
+      images: Array.isArray(images) ? images.slice(0, 10) : [],
+      caption: caption || null,
+      detail_url: detail_url || null,
+      make: make || null,
+      model: model || null,
+    };
+
+    const { error } = await supabase
+      .from('social_post_jobs')
+      .insert({ user_id: user.id, platform: String(platform), mobile_ad_id: String(mobile_ad_id), payload });
+    if (error) return res.status(500).json({ error: error.message });
+
+    return res.json({ queued: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Failed to queue social post' });
   }
 };

@@ -13,5 +13,6 @@ router.get('/mobilede/status', mobiledeController.getMobileDeStatus);
 router.get('/mobilede/listings', mobiledeController.getMobileDeListings);
 router.get('/mobilede/filters', mobiledeController.getMobileDeFilters);
 router.post('/mobilede/seed-dummy', mobiledeController.seedDummyListing);
+router.get('/mobilede/ad-details', mobiledeController.getMobileDeAdDetails);
 
 module.exports = router;

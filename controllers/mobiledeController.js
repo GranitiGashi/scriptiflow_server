@@ -459,6 +459,52 @@ exports.getUserCars = async (req, res) => {
   }
 };
 
+// Get details for a specific mobile.de ad, including images
+exports.getMobileDeAdDetails = async (req, res) => {
+  try {
+    const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
+    const userId = authRes.user.id;
+
+    const adIdRaw = req.query.mobile_ad_id || req.query.id || req.query.adId;
+    const mobileAdId = typeof adIdRaw === 'string' ? adIdRaw : null;
+    if (!mobileAdId) return res.status(400).json({ error: 'mobile_ad_id is required' });
+
+    const credRes = await supabase
+      .from('mobile_de_credentials')
+      .select('username, encrypted_password')
+      .eq('user_id', userId)
+      .eq('provider', 'mobile_de')
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (credRes.error || !credRes.data) {
+      return res.status(404).json({ error: 'No credentials found' });
+    }
+
+    const [iv, encryptedPassword] = credRes.data.encrypted_password.split(':');
+    const password = decrypt(encryptedPassword, iv);
+    const username = credRes.data.username;
+
+    const details = await fetchMobileDeDetails(username, password, mobileAdId);
+    const imgs = Array.isArray(details?.images) ? details.images : [];
+    const images = imgs
+      .map((i) => i?.xxxl || i?.xxl || i?.xl || i?.l || i?.m || i?.s)
+      .filter(Boolean)
+      .slice(0, 10);
+
+    return res.json({
+      mobile_ad_id: mobileAdId,
+      images,
+      make: details?.make || details?.vehicle?.make || null,
+      model: details?.model || details?.vehicle?.model || null,
+      detail_url: details?.detailPageUrl || null,
+    });
+  } catch (err) {
+    console.error('getMobileDeAdDetails error:', err);
+    return res.status(500).json({ error: 'Failed to fetch ad details', details: err.message });
+  }
+};
+
 // Get sync status and counts
 exports.getMobileDeStatus = async (req, res) => {
   try {

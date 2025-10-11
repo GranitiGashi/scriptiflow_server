@@ -11,6 +11,8 @@ router.get('/fb/callback', socialController.fbCallback);
 router.get('/social-accounts', socialController.getSocialAccounts);
 router.get('/social-accounts-by-email', socialController.getSocialAccountsByEmail);
 router.post('/social/disconnect', socialController.disconnectSocial);
+router.post('/social/generate-caption', socialController.generateCaption);
+router.post('/social/queue-post', socialController.queueSocialPost);
 
 module.exports = router;
 
