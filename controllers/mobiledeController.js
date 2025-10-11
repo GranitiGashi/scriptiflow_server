@@ -459,7 +459,7 @@ exports.getUserCars = async (req, res) => {
   }
 };
 
-// Get details for a specific mobile.de ad, including images
+// Get details for a specific mobile.de ad, including images (from cache only)
 exports.getMobileDeAdDetails = async (req, res) => {
   try {
     const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
@@ -470,27 +470,25 @@ exports.getMobileDeAdDetails = async (req, res) => {
     const mobileAdId = typeof adIdRaw === 'string' ? adIdRaw : null;
     if (!mobileAdId) return res.status(400).json({ error: 'mobile_ad_id is required' });
 
-    const credRes = await supabase
-      .from('mobile_de_credentials')
-      .select('username, encrypted_password')
+    // Prefer cached listing (populated during sync). Avoid remote single-ad fetch (unsupported).
+    const { data: row, error } = await supabase
+      .from('mobile_de_listings')
+      .select('details, image_xxxl_url, images')
       .eq('user_id', userId)
       .eq('provider', 'mobile_de')
-      .is('deleted_at', null)
+      .eq('mobile_ad_id', mobileAdId)
       .maybeSingle();
-    if (credRes.error || !credRes.data) {
-      return res.status(404).json({ error: 'No credentials found' });
+    if (error) return res.status(500).json({ error: error.message });
+
+    if (!row) {
+      // Graceful cache miss: return empty images so client can fallback to the card image
+      return res.json({ mobile_ad_id: mobileAdId, images: [], make: null, model: null, detail_url: null, source: 'cache_miss' });
     }
 
-    const [iv, encryptedPassword] = credRes.data.encrypted_password.split(':');
-    const password = decrypt(encryptedPassword, iv);
-    const username = credRes.data.username;
-
-    const details = await fetchMobileDeDetails(username, password, mobileAdId);
-    const imgs = Array.isArray(details?.images) ? details.images : [];
-    const images = imgs
-      .map((i) => i?.xxxl || i?.xxl || i?.xl || i?.l || i?.m || i?.s)
-      .filter(Boolean)
-      .slice(0, 10);
+    const details = row.details || {};
+    const listImages = Array.isArray(row.images) ? row.images : [];
+    const primary = row.image_xxxl_url || null;
+    const images = (listImages.length ? listImages : (primary ? [primary] : [])).slice(0, 10);
 
     return res.json({
       mobile_ad_id: mobileAdId,
@@ -498,9 +496,9 @@ exports.getMobileDeAdDetails = async (req, res) => {
       make: details?.make || details?.vehicle?.make || null,
       model: details?.model || details?.vehicle?.model || null,
       detail_url: details?.detailPageUrl || null,
+      source: 'cache',
     });
   } catch (err) {
-    console.error('getMobileDeAdDetails error:', err);
     return res.status(500).json({ error: 'Failed to fetch ad details', details: err.message });
   }
 };
