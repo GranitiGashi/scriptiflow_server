@@ -188,7 +188,14 @@ async function runOnce(limit = 10) {
   let processed = 0;
   for (const job of jobs) {
     try {
-      await supabase.from('social_post_jobs').update({ status: 'posting', attempts: job.attempts + 1, updated_at: new Date().toISOString() }).eq('id', job.id);
+      const attemptsNext = Number.isFinite(job?.attempts) ? (job.attempts + 1) : 1;
+      {
+        const up = await supabase
+          .from('social_post_jobs')
+          .update({ status: 'posting', attempts: attemptsNext, updated_at: new Date().toISOString() })
+          .eq('id', job.id);
+        if (up?.error) throw new Error(`DB update posting failed: ${up.error.message}`);
+      }
       const make = job.payload?.make || job.payload?.details?.make || '';
       const model = job.payload?.model || job.payload?.details?.model || '';
       const captionBase = await generateCaptionDE({ make, model });
@@ -203,12 +210,34 @@ async function runOnce(limit = 10) {
       } else {
         throw new Error(`Unsupported platform: ${job.platform}`);
       }
-      await supabase.from('social_post_jobs').update({ status: 'success', error: null, updated_at: new Date().toISOString(), result: result || null }).eq('id', job.id);
+      {
+        const up = await supabase
+          .from('social_post_jobs')
+          .update({ status: 'success', error: null, updated_at: new Date().toISOString(), result: result || null })
+          .eq('id', job.id);
+        if (up?.error) {
+          // Fallback if result column doesn't exist
+          const msg = up.error.message || '';
+          if (/result/i.test(msg)) {
+            const up2 = await supabase
+              .from('social_post_jobs')
+              .update({ status: 'success', error: null, updated_at: new Date().toISOString() })
+              .eq('id', job.id);
+            if (up2?.error) throw new Error(`DB update success failed: ${up2.error.message}`);
+          } else {
+            throw new Error(`DB update success failed: ${msg}`);
+          }
+        }
+      }
       processed += 1;
     } catch (e) {
       const msg = e?.response?.data ? JSON.stringify(e.response.data) : (e?.message || String(e));
-      const nextStatus = (job.attempts + 1) >= 3 ? 'failed' : 'queued';
-      await supabase.from('social_post_jobs').update({ status: nextStatus, error: msg, updated_at: new Date().toISOString() }).eq('id', job.id);
+      const attemptsNext = Number.isFinite(job?.attempts) ? (job.attempts + 1) : 1;
+      const nextStatus = attemptsNext >= 3 ? 'failed' : 'queued';
+      await supabase
+        .from('social_post_jobs')
+        .update({ status: nextStatus, error: msg, updated_at: new Date().toISOString(), attempts: attemptsNext })
+        .eq('id', job.id);
     }
   }
   return { processed };
