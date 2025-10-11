@@ -32,6 +32,20 @@ async function fetchMobileDeDetails(username, password, mobileAdId) {
   return response.data;
 }
 
+// Preferred: fetch a single ad by ID (richer images incl. xxxl)
+async function fetchMobileDeAdById(username, password, mobileAdId) {
+  const auth = 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
+  const response = await axios.get(`https://services.mobile.de/search-api/ad/${encodeURIComponent(mobileAdId)}`, {
+    headers: { Authorization: auth, Accept: 'application/vnd.de.mobile.api+json' },
+    validateStatus: () => true,
+  });
+  if (response.status < 200 || response.status >= 300) {
+    const body = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+    throw new Error(`mobile.de ad fetch failed: ${response.status} ${body}`);
+  }
+  return response.data;
+}
+
 // In-memory guard to avoid concurrent syncs per user
 const inFlightMobileDeSyncByUser = new Map();
 
@@ -459,7 +473,7 @@ exports.getUserCars = async (req, res) => {
   }
 };
 
-// Get details for a specific mobile.de ad, including images (from cache only)
+// Get details for a specific mobile.de ad, including images (prefer remote /ad/:id; fallback to cache)
 exports.getMobileDeAdDetails = async (req, res) => {
   try {
     const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
@@ -470,34 +484,58 @@ exports.getMobileDeAdDetails = async (req, res) => {
     const mobileAdId = typeof adIdRaw === 'string' ? adIdRaw : null;
     if (!mobileAdId) return res.status(400).json({ error: 'mobile_ad_id is required' });
 
-    // Prefer cached listing (populated during sync). Avoid remote single-ad fetch (unsupported).
-    const { data: row, error } = await supabase
-      .from('mobile_de_listings')
-      .select('details, image_xxxl_url, images')
-      .eq('user_id', userId)
-      .eq('provider', 'mobile_de')
-      .eq('mobile_ad_id', mobileAdId)
-      .maybeSingle();
-    if (error) return res.status(500).json({ error: error.message });
+    // Try remote /ad/:id first for full image set (xxxl)
+    try {
+      const credRes = await supabase
+        .from('mobile_de_credentials')
+        .select('username, encrypted_password')
+        .eq('user_id', userId)
+        .eq('provider', 'mobile_de')
+        .is('deleted_at', null)
+        .maybeSingle();
+      if (credRes.error || !credRes.data) throw new Error('No credentials');
+      const [iv, encryptedPassword] = credRes.data.encrypted_password.split(':');
+      const password = decrypt(encryptedPassword, iv);
+      const username = credRes.data.username;
 
-    if (!row) {
-      // Graceful cache miss: return empty images so client can fallback to the card image
-      return res.json({ mobile_ad_id: mobileAdId, images: [], make: null, model: null, detail_url: null, source: 'cache_miss' });
+      const ad = await fetchMobileDeAdById(username, password, mobileAdId);
+      const imgs = Array.isArray(ad?.images) ? ad.images : [];
+      const images = imgs
+        .map((i) => i?.xxxl || i?.xxl || i?.xl || i?.l || i?.m || i?.s)
+        .filter(Boolean)
+        .slice(0, 10);
+      return res.json({
+        mobile_ad_id: mobileAdId,
+        images,
+        make: ad?.make || ad?.vehicle?.make || null,
+        model: ad?.model || ad?.vehicle?.model || null,
+        detail_url: ad?.detailPageUrl || null,
+        source: 'remote',
+      });
+    } catch (_) {
+      // Fallback to cached listing
+      const { data: row, error } = await supabase
+        .from('mobile_de_listings')
+        .select('details, image_xxxl_url, images')
+        .eq('user_id', userId)
+        .eq('provider', 'mobile_de')
+        .eq('mobile_ad_id', mobileAdId)
+        .maybeSingle();
+      if (error) return res.status(500).json({ error: error.message });
+      if (!row) return res.json({ mobile_ad_id: mobileAdId, images: [], make: null, model: null, detail_url: null, source: 'cache_miss' });
+      const details = row.details || {};
+      const listImages = Array.isArray(row.images) ? row.images : [];
+      const primary = row.image_xxxl_url || null;
+      const images = (listImages.length ? listImages : (primary ? [primary] : [])).slice(0, 10);
+      return res.json({
+        mobile_ad_id: mobileAdId,
+        images,
+        make: details?.make || details?.vehicle?.make || null,
+        model: details?.model || details?.vehicle?.model || null,
+        detail_url: details?.detailPageUrl || null,
+        source: 'cache',
+      });
     }
-
-    const details = row.details || {};
-    const listImages = Array.isArray(row.images) ? row.images : [];
-    const primary = row.image_xxxl_url || null;
-    const images = (listImages.length ? listImages : (primary ? [primary] : [])).slice(0, 10);
-
-    return res.json({
-      mobile_ad_id: mobileAdId,
-      images,
-      make: details?.make || details?.vehicle?.make || null,
-      model: details?.model || details?.vehicle?.model || null,
-      detail_url: details?.detailPageUrl || null,
-      source: 'cache',
-    });
   } catch (err) {
     return res.status(500).json({ error: 'Failed to fetch ad details', details: err.message });
   }
