@@ -23,21 +23,31 @@ async function postToFacebook({ user_id, caption, images }) {
         params: { url, published: false, access_token: token },
       });
       if (res.data?.id) mediaFbids.push(res.data.id);
-    } catch (e) {}
+    } catch (e) {
+      const m = e?.response?.data ? JSON.stringify(e.response.data) : (e?.message || String(e));
+      throw new Error(`FB photo upload failed: ${m}`);
+    }
   }
 
   // Create post
-  if (mediaFbids.length > 1) {
-    const attached_media = mediaFbids.map((id) => ({ media_fbid: id }));
-    const res = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/feed`, null, {
-      params: { message: caption || '', attached_media: JSON.stringify(attached_media), access_token: token },
-    });
-    return res.data;
-  } else {
-    const params = { message: caption || '', access_token: token };
-    if (mediaFbids[0]) params.object_attachment = mediaFbids[0];
-    const res = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/feed`, null, { params });
-    return res.data;
+  try {
+    if (mediaFbids.length > 1) {
+      // attached_media[0]={"media_fbid":ID}&attached_media[1]={"media_fbid":ID} ...
+      const params = new URLSearchParams();
+      params.set('message', caption || '');
+      params.set('access_token', token);
+      mediaFbids.forEach((id, idx) => params.set(`attached_media[${idx}]`, JSON.stringify({ media_fbid: id })));
+      const res = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/feed`, params);
+      return res.data;
+    } else {
+      const params = { message: caption || '', access_token: token };
+      if (mediaFbids[0]) params.object_attachment = mediaFbids[0];
+      const res = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/feed`, null, { params });
+      return res.data;
+    }
+  } catch (e) {
+    const m = e?.response?.data ? JSON.stringify(e.response.data) : (e?.message || String(e));
+    throw new Error(`FB post failed: ${m}`);
   }
 }
 
@@ -56,12 +66,34 @@ async function postToInstagram({ user_id, caption, images }) {
   const token = ig.access_token;
   const imgs = (images || []).slice(0, 10);
 
+  // Helper: poll a media ID until status is FINISHED or timeout
+  async function waitForMediaReady(creationId) {
+    const start = Date.now();
+    const timeoutMs = 90_000; // up to 90s
+    const intervalMs = 2000;
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const r = await axios.get(`https://graph.facebook.com/v19.0/${creationId}`, {
+          params: { fields: 'status_code,status', access_token: token },
+        });
+        const s = (r.data?.status_code || r.data?.status || '').toString().toUpperCase();
+        if (s === 'FINISHED') return true;
+        if (s === 'ERROR') throw new Error(`IG media creation error: ${JSON.stringify(r.data)}`);
+      } catch (e) {
+        // keep polling unless hard error
+      }
+      await new Promise((res) => setTimeout(res, intervalMs));
+    }
+    throw new Error('IG media not ready before timeout');
+  }
+
   if (imgs.length <= 1) {
     // Single image
     const media = await axios.post(`https://graph.facebook.com/v19.0/${igId}/media`, null, {
       params: { image_url: imgs[0], caption: caption || '', access_token: token },
     });
     const creation_id = media.data?.id;
+    await waitForMediaReady(creation_id);
     const publish = await axios.post(`https://graph.facebook.com/v19.0/${igId}/media_publish`, null, {
       params: { creation_id, access_token: token },
     });
@@ -76,11 +108,16 @@ async function postToInstagram({ user_id, caption, images }) {
     });
     if (m.data?.id) children.push(m.data.id);
   }
+  // Poll readiness of children
+  for (const id of children) {
+    await waitForMediaReady(id);
+  }
 
   const carousel = await axios.post(`https://graph.facebook.com/v19.0/${igId}/media`, null, {
     params: { media_type: 'CAROUSEL', children: children.join(','), caption: caption || '', access_token: token },
   });
   const creation_id = carousel.data?.id;
+  await waitForMediaReady(creation_id);
   const publish = await axios.post(`https://graph.facebook.com/v19.0/${igId}/media_publish`, null, {
     params: { creation_id, access_token: token },
   });
@@ -125,17 +162,21 @@ async function runOnce(limit = 10) {
       const captionBase = await generateCaptionDE({ make, model });
       const caption = job.payload?.caption ? `${job.payload.caption}\n\n${captionBase}` : captionBase;
       const images = Array.isArray(job.payload?.images) ? job.payload.images : (job.payload?.image_url ? [job.payload.image_url] : []);
+      if (!images.length) throw new Error('No images provided');
       let result;
       if (job.platform === 'facebook') {
         result = await postToFacebook({ user_id: job.user_id, caption, images });
       } else if (job.platform === 'instagram') {
         result = await postToInstagram({ user_id: job.user_id, caption, images });
+      } else {
+        throw new Error(`Unsupported platform: ${job.platform}`);
       }
-      await supabase.from('social_post_jobs').update({ status: 'success', error: null, updated_at: new Date().toISOString() }).eq('id', job.id);
+      await supabase.from('social_post_jobs').update({ status: 'success', error: null, updated_at: new Date().toISOString(), result: result || null }).eq('id', job.id);
       processed += 1;
     } catch (e) {
       const msg = e?.response?.data ? JSON.stringify(e.response.data) : (e?.message || String(e));
-      await supabase.from('social_post_jobs').update({ status: job.attempts + 1 >= 3 ? 'failed' : 'queued', error: msg, updated_at: new Date().toISOString() }).eq('id', job.id);
+      const nextStatus = (job.attempts + 1) >= 3 ? 'failed' : 'queued';
+      await supabase.from('social_post_jobs').update({ status: nextStatus, error: msg, updated_at: new Date().toISOString() }).eq('id', job.id);
     }
   }
   return { processed };
