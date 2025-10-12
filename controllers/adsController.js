@@ -412,18 +412,21 @@ exports.createCampaign = async (req, res) => {
       status: 'PAUSED',
       access_token,
     };
-    // EU DSA compliance: beneficiary is the person/org benefiting from the ads
-    // Try to infer from user metadata, else fallback to a generic label
-    let beneficiary = null;
+    // EU DSA compliance: indicate beneficiary (benefiting org/person) and payor (paying org/person)
+    // Try to infer from user metadata, allow plan overrides
+    let beneficiary = (plan && (plan.beneficiary || plan.dsa_beneficiary)) || null;
+    let payor = (plan && (plan.payor || plan.payer || plan.dsa_payor)) || null;
     try {
       const { data: appUser } = await supabaseAdmin
         .from('users_app')
         .select('company_name, full_name, email')
         .eq('id', user.id)
         .maybeSingle();
-      beneficiary = appUser?.company_name || appUser?.full_name || appUser?.email || null;
+      if (!beneficiary) beneficiary = appUser?.company_name || appUser?.full_name || appUser?.email || null;
+      if (!payor) payor = appUser?.company_name || appUser?.full_name || appUser?.email || null;
     } catch (_) {}
     if (beneficiary) Object.assign(adsetParams, { dsa_beneficiary: beneficiary });
+    if (payor) Object.assign(adsetParams, { dsa_payor: payor });
     if (bidStrategy) Object.assign(adsetParams, { bid_strategy: bidStrategy });
     if (bidAmountParam) Object.assign(adsetParams, { bid_amount: bidAmountParam });
 
