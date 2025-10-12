@@ -367,6 +367,21 @@ exports.createCampaign = async (req, res) => {
     const adset_end_time = plan.end_time || new Date(Date.now() + (plan.duration_days || 7) * 86400000).toISOString();
     const daily_budget = plan.daily_budget_cents || 1000; // in cents
     const targeting = plan.targeting || { geo_locations: { countries: [plan.country || 'DE'] } };
+    // Ensure Advantage Audience flag is explicitly set per FB requirement
+    // Use plan.advantage_audience (boolean) if provided, else preserve inbound targeting_automation, else default to 0 (disabled)
+    let effectiveTargeting = { ...targeting };
+    const hasAutomation = typeof targeting?.targeting_automation?.advantage_audience !== 'undefined';
+    if (typeof plan?.advantage_audience === 'boolean') {
+      effectiveTargeting = {
+        ...effectiveTargeting,
+        targeting_automation: { advantage_audience: plan.advantage_audience ? 1 : 0 },
+      };
+    } else if (!hasAutomation) {
+      effectiveTargeting = {
+        ...effectiveTargeting,
+        targeting_automation: { advantage_audience: 0 },
+      };
+    }
 
     console.log('Special ad categories (normalized):', specialAdCategories);
     console.log('Using campaignObjective:', campaignObjective, 'optimizationGoal:', optimizationGoal);
@@ -408,7 +423,7 @@ exports.createCampaign = async (req, res) => {
       daily_budget,
       start_time: adset_start_time,
       end_time: adset_end_time,
-      targeting: JSON.stringify(targeting),
+      targeting: JSON.stringify(effectiveTargeting),
       status: 'PAUSED',
       access_token,
     };
