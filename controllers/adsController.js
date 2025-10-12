@@ -371,20 +371,51 @@ exports.createCampaign = async (req, res) => {
     console.log('Special ad categories (normalized):', specialAdCategories);
     console.log('Using campaignObjective:', campaignObjective, 'optimizationGoal:', optimizationGoal);
 
-    const adsetRes = await axios.post(`${GRAPH_BASE}/${ad_account_id}/adsets`, null, {
-      params: {
-        name: creative?.adset_name || 'Car Ad Set',
-        campaign_id,
-        billing_event: 'IMPRESSIONS',
-        optimization_goal: optimizationGoal, // <- valid mapped value
-        daily_budget,
-        start_time: adset_start_time,
-        end_time: adset_end_time,
-        targeting: JSON.stringify(targeting),
-        status: 'PAUSED',
-        access_token,
-      },
-    });
+    // Bid strategy mapping: support lowest cost with/without cap
+    let bidStrategy = undefined;
+    let bidAmountParam = undefined;
+    const planBidStrategy = String(plan?.bid_strategy || '').toUpperCase();
+    const planBidAmount = Number.isFinite(plan?.bid_amount) ? Number(plan.bid_amount) : undefined;
+    if (planBidStrategy) {
+      if (planBidStrategy === 'LOWEST_COST') {
+        if (planBidAmount && planBidAmount > 0) {
+          bidStrategy = 'LOWEST_COST_WITH_BID_CAP';
+          bidAmountParam = planBidAmount;
+        } else {
+          bidStrategy = 'LOWEST_COST_WITHOUT_CAP';
+        }
+      } else if (planBidStrategy === 'LOWEST_COST_WITH_BID_CAP') {
+        bidStrategy = 'LOWEST_COST_WITH_BID_CAP';
+        if (planBidAmount && planBidAmount > 0) bidAmountParam = planBidAmount; else {
+          return res.status(400).json({ error: 'bid_amount is required when using LOWEST_COST_WITH_BID_CAP' });
+        }
+      } else if (planBidStrategy === 'LOWEST_COST_WITHOUT_CAP') {
+        bidStrategy = 'LOWEST_COST_WITHOUT_CAP';
+      } else if (planBidStrategy === 'COST_CAP') {
+        // Basic support: require bid_amount, otherwise FB will error
+        bidStrategy = 'COST_CAP';
+        if (planBidAmount && planBidAmount > 0) bidAmountParam = planBidAmount; else {
+          return res.status(400).json({ error: 'bid_amount is required when using COST_CAP' });
+        }
+      }
+    }
+
+    const adsetParams = {
+      name: creative?.adset_name || 'Car Ad Set',
+      campaign_id,
+      billing_event: 'IMPRESSIONS',
+      optimization_goal: optimizationGoal, // <- valid mapped value
+      daily_budget,
+      start_time: adset_start_time,
+      end_time: adset_end_time,
+      targeting: JSON.stringify(targeting),
+      status: 'PAUSED',
+      access_token,
+    };
+    if (bidStrategy) Object.assign(adsetParams, { bid_strategy: bidStrategy });
+    if (bidAmountParam) Object.assign(adsetParams, { bid_amount: bidAmountParam });
+
+    const adsetRes = await axios.post(`${GRAPH_BASE}/${ad_account_id}/adsets`, null, { params: adsetParams });
     const adset_id = adsetRes.data.id;
 
     // 3) Create creative (requires an image or video) - assume image url provided

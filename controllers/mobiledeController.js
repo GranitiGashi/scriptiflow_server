@@ -303,7 +303,7 @@ exports.getMobileCredentials = async (req, res) => {
 
     const selectRes = await supabase
       .from('mobile_de_credentials')
-      .select('username, encrypted_password')
+      .select('username, last_sync_at')
       .eq('user_id', userId)
       .eq('provider', 'mobile_de')
       .is('deleted_at', null)
@@ -319,11 +319,20 @@ exports.getMobileCredentials = async (req, res) => {
       return res.status(404).json({ error: 'No credentials found' });
     }
 
-    // Decrypt password if needed, but for security, return masked or omit
-    const [iv, encryptedPassword] = data.encrypted_password.split(':');
-    const password = decrypt(encryptedPassword, iv);
+    const username = String(data.username || '');
+    // Mask username/email for display
+    const at = username.indexOf('@');
+    let masked = username;
+    if (at > 1) {
+      const name = username.slice(0, at);
+      const domain = username.slice(at);
+      const visible = name.slice(0, Math.min(2, name.length));
+      masked = `${visible}${'*'.repeat(Math.max(0, name.length - visible.length))}${domain}`;
+    } else if (username.length > 4) {
+      masked = `${username.slice(0, 2)}${'*'.repeat(username.length - 4)}${username.slice(-2)}`;
+    }
 
-    res.json({ username: data.username, password: password });
+    res.json({ connected: true, username: masked, last_sync_at: data.last_sync_at || null });
   } catch (err) {
     console.error('Server error:', err.message, err.stack);
     res.status(500).json({ error: 'Server error', details: err.message });
