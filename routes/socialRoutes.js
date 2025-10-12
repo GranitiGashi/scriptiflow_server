@@ -14,6 +14,7 @@ router.post('/social/disconnect', socialController.disconnectSocial);
 router.post('/social/generate-caption', socialController.generateCaption);
 router.post('/social/queue-post', socialController.queueSocialPost);
 router.get('/social/posts', socialController.listSocialPosts);
+router.post('/social/facebook/token', socialController.setFacebookToken);
 
 module.exports = router;
 

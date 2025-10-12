@@ -415,6 +415,28 @@ exports.queueSocialPost = async (req, res) => {
   }
 };
 
+// Manually set a Facebook Marketing API access token for the current user (e.g., sandbox token)
+exports.setFacebookToken = async (req, res) => {
+  try {
+    const { user, error: authErr } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (authErr || !user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { access_token, expires_at, metadata } = req.body || {};
+    if (!access_token || typeof access_token !== 'string') {
+      return res.status(400).json({ error: 'access_token is required (string)' });
+    }
+
+    const meta = Object.assign({ source: 'manual', environment: 'sandbox' }, metadata || {});
+
+    await upsertFacebookUserToken(user.id, access_token, meta);
+
+    // Optionally store expiry if your table supports it (handled in model if needed)
+    return res.json({ saved: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Failed to save token' });
+  }
+};
+
 // List social posts by status with pagination
 exports.listSocialPosts = async (req, res) => {
   try {
