@@ -412,6 +412,18 @@ exports.createCampaign = async (req, res) => {
       status: 'PAUSED',
       access_token,
     };
+    // EU DSA compliance: beneficiary is the person/org benefiting from the ads
+    // Try to infer from user metadata, else fallback to a generic label
+    let beneficiary = null;
+    try {
+      const { data: appUser } = await supabaseAdmin
+        .from('users_app')
+        .select('company_name, full_name, email')
+        .eq('id', user.id)
+        .maybeSingle();
+      beneficiary = appUser?.company_name || appUser?.full_name || appUser?.email || null;
+    } catch (_) {}
+    if (beneficiary) Object.assign(adsetParams, { dsa_beneficiary: beneficiary });
     if (bidStrategy) Object.assign(adsetParams, { bid_strategy: bidStrategy });
     if (bidAmountParam) Object.assign(adsetParams, { bid_amount: bidAmountParam });
 
