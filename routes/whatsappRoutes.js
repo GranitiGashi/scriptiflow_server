@@ -24,6 +24,9 @@ router.post('/whatsapp/tag', requireSupabaseAuth, controller.setTag);
 // Demo helpers (in-memory) for quick screencast
 router.get('/whatsapp/demo/inbox', requireSupabaseAuth, controller.demoInbox);
 
+// Embedded Signup callback (public)
+router.get('/whatsapp/embedded-signup/callback', controller.embeddedSignupCallback);
+
 module.exports = router;
 
 

@@ -5,6 +5,10 @@ const axios = require('axios');
 const { getFacebookUserToken } = require('../models/socialTokenModel');
 const demo = require('../utils/whatsappDemoStore');
 const WA = require('../utils/whatsappConfig');
+require('dotenv').config();
+
+const FB_APP_ID = process.env.FACEBOOK_APP_ID;
+const FB_APP_SECRET = process.env.FACEBOOK_APP_SECRET;
 
 function normalizePhone(phone) {
   return (phone || '').replace(/\D+/g, '');
@@ -455,6 +459,88 @@ exports.setTag = async (req, res) => {
     return res.json({ ok: true });
   } catch (err) {
     return res.status(500).json({ error: err.message || 'Server error' });
+  }
+};
+
+// WhatsApp Embedded Signup callback: exchange code for token and save credentials
+exports.embeddedSignupCallback = async (req, res) => {
+  try {
+    const { code, state } = req.query;
+    if (!code) return res.status(400).json({ error: 'Missing code parameter' });
+
+    // Parse state to get user_id
+    let userId = null;
+    if (state) {
+      try {
+        const decoded = JSON.parse(decodeURIComponent(state));
+        userId = decoded.user_id || null;
+      } catch (_) {}
+    }
+
+    // Exchange code for access token
+    const tokenRes = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
+      params: {
+        client_id: FB_APP_ID,
+        client_secret: FB_APP_SECRET,
+        code,
+      },
+    });
+    const access_token = tokenRes.data?.access_token;
+    if (!access_token) return res.status(400).json({ error: 'Failed to exchange code for token' });
+
+    // Fetch WhatsApp Business Accounts
+    const wbaRes = await axios.get('https://graph.facebook.com/v19.0/me/whatsapp_business_accounts', {
+      params: { access_token, fields: 'id,name' },
+    });
+    const wabas = wbaRes.data?.data || [];
+    if (!wabas.length) return res.status(400).json({ error: 'No WhatsApp Business Accounts found' });
+
+    const waba = wabas[0];
+    const wabaId = waba.id;
+
+    // Fetch phone numbers for this WABA
+    const phoneRes = await axios.get(`https://graph.facebook.com/v19.0/${wabaId}/phone_numbers`, {
+      params: { access_token, fields: 'id,display_phone_number,verified_name' },
+    });
+    const phones = phoneRes.data?.data || [];
+    if (!phones.length) return res.status(400).json({ error: 'No phone numbers found for WABA' });
+
+    const phone = phones[0];
+    const phoneNumberId = phone.id;
+
+    // If userId not found from state, return data for manual save
+    if (!userId) {
+      return res.json({
+        message: 'Embedded signup completed. Please save these credentials.',
+        waba_business_account_id: wabaId,
+        waba_phone_number_id: phoneNumberId,
+        access_token,
+        display_phone_number: phone.display_phone_number,
+        verified_name: phone.verified_name || null,
+      });
+    }
+
+    // Save credentials for this user
+    const { error } = await supabaseAdmin
+      .from('whatsapp_credentials')
+      .upsert({
+        user_id: userId,
+        waba_business_account_id: wabaId,
+        waba_phone_number_id: phoneNumberId,
+        access_token_encrypted: access_token,
+        connected_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        deleted_at: null,
+      }, { onConflict: 'user_id' });
+    if (error) return res.status(500).json({ error: 'Failed to save credentials', details: error.message });
+
+    // Redirect to dashboard
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    return res.redirect(`${frontendUrl}/dashboard/integrations?whatsapp=connected`);
+  } catch (err) {
+    console.error('embeddedSignupCallback error:', err.response?.data || err.message);
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    return res.redirect(`${frontendUrl}/dashboard/integrations?whatsapp=error&message=${encodeURIComponent(err.message || 'Signup failed')}`);
   }
 };
 
