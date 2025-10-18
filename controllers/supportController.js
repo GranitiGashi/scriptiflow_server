@@ -92,7 +92,7 @@ exports.listAllTickets = async (req, res) => {
 
     const { data, error } = await supabaseAdmin
       .from('support_tickets')
-      .select('id, user_id, subject, message, status, created_at, updated_at')
+      .select('id, user_id, subject, message, status, created_at, updated_at, users_app!inner(full_name, email)')
       .order('created_at', { ascending: false });
     if (error) return res.status(500).json({ error: 'Failed to fetch tickets', details: error.message });
     return res.json(data || []);
@@ -124,10 +124,25 @@ exports.addMessage = async (req, res) => {
     if (tErr || !ticket) return res.status(404).json({ error: 'Ticket not found' });
     if (!isAdmin && ticket.user_id !== user.id) return res.status(403).json({ error: 'Forbidden' });
 
+    // Handle uploaded files (multer memory storage)
+    let attachments = null;
+    try {
+      const files = Array.isArray(req.files) ? req.files : [];
+      if (files.length) {
+        const { uploadBufferAdmin } = require('../utils/storage');
+        const uploaded = [];
+        for (const f of files.slice(0, 5)) {
+          const up = await uploadBufferAdmin({ buffer: f.buffer, contentType: f.mimetype, pathPrefix: `support/${ticket_id}` });
+          uploaded.push({ name: f.originalname, mime: f.mimetype, size: f.size, url: up.url, path: up.path });
+        }
+        attachments = uploaded;
+      }
+    } catch (_) {}
+
     const { data, error } = await supabaseAdmin
       .from('support_messages')
-      .insert([{ ticket_id, user_id: user.id, message }])
-      .select('id, message, created_at')
+      .insert([{ ticket_id, user_id: user.id, message, attachments }])
+      .select('id, message, attachments, created_at')
       .single();
     if (error) return res.status(500).json({ error: 'Failed to add message', details: error.message });
 
@@ -197,7 +212,7 @@ exports.listMessages = async (req, res) => {
 
     const { data, error } = await supabaseAdmin
       .from('support_messages')
-      .select('id, user_id, message, created_at')
+      .select('id, user_id, message, attachments, created_at')
       .eq('ticket_id', ticket_id)
       .order('created_at', { ascending: true });
     if (error) return res.status(500).json({ error: 'Failed to fetch messages', details: error.message });
