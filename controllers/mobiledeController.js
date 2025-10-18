@@ -1,5 +1,6 @@
 // controllers/mobiledeController.js
 const supabase = require('../config/supabaseClient');
+const supabaseAdmin = require('../config/supabaseAdmin');
 const { getUserFromRequest } = require('../utils/authUser');
 const { encrypt, decrypt } = require('../utils/crypto');
 const axios = require('axios');
@@ -51,7 +52,7 @@ const inFlightMobileDeSyncByUser = new Map();
 
 // Perform a full sync for a specific user (used by explicit route and background refresh)
 async function performMobileDeSyncForUser(userId) {
-  const credRes = await supabase
+  const credRes = await supabaseAdmin
     .from('mobile_de_credentials')
     .select('username, encrypted_password')
     .eq('user_id', userId)
@@ -92,7 +93,7 @@ async function performMobileDeSyncForUser(userId) {
     if (!mobileAdId) continue;
 
     // Upsert only if new; if exists, update missing details
-    const { data: existing } = await supabase
+    const { data: existing } = await supabaseAdmin
       .from('mobile_de_listings')
       .select('mobile_ad_id, details')
       .eq('user_id', userId)
@@ -101,7 +102,7 @@ async function performMobileDeSyncForUser(userId) {
       .maybeSingle();
     if (existing) {
       // Update last_seen
-      await supabase
+      await supabaseAdmin
         .from('mobile_de_listings')
         .update({ last_seen: new Date().toISOString() })
         .eq('user_id', userId)
@@ -114,7 +115,7 @@ async function performMobileDeSyncForUser(userId) {
         const existingModel = (existingDetails && (existingDetails.model || existingDetails?.vehicle?.model)) ? String(existingDetails.model || existingDetails?.vehicle?.model) : '';
         const merged = { ...(existingDetails || {}), make: existingMake || (ad.make || ad?.vehicle?.make || ''), model: existingModel || (ad.model || ad?.vehicle?.model || '') };
         if (!existingDetails || !existingMake || !existingModel) {
-          await supabase
+          await supabaseAdmin
             .from('mobile_de_listings')
             .update({ details: merged })
             .eq('user_id', userId)
@@ -146,7 +147,7 @@ async function performMobileDeSyncForUser(userId) {
       detailPageUrl: (details?.detailPageUrl || ad.detailPageUrl || null),
     };
 
-    await supabase
+    await supabaseAdmin
       .from('mobile_de_listings')
       .insert({
         user_id: userId,
@@ -170,7 +171,7 @@ async function performMobileDeSyncForUser(userId) {
           provider: 'clipdrop',
           options: { background: { type: 'white' }, overlayLogo: idx === 0, outputFormat: 'png' },
         }));
-        await supabase.from('image_processing_jobs').insert(jobs);
+        await supabaseAdmin.from('image_processing_jobs').insert(jobs);
       }
     } catch (e) {
       // ignore queuing failures to not block sync
@@ -180,7 +181,7 @@ async function performMobileDeSyncForUser(userId) {
     const platforms = ['facebook', 'instagram'];
     for (const platform of platforms) {
       const caption = `${(details?.make || ad.make || '').toString()} ${(details?.model || ad.model || '').toString()}`.trim();
-      await supabase
+      await supabaseAdmin
         .from('social_post_jobs')
         .insert({
           user_id: userId,
@@ -201,7 +202,7 @@ async function performMobileDeSyncForUser(userId) {
   }
 
   // Update last_sync_at
-  await supabase
+  await supabaseAdmin
     .from('mobile_de_credentials')
     .update({ last_sync_at: new Date().toISOString() })
     .eq('user_id', userId)

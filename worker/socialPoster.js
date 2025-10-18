@@ -1,9 +1,10 @@
 const axios = require('axios');
 const supabase = require('../config/supabaseClient');
+const supabaseAdmin = require('../config/supabaseAdmin');
 
 async function postToFacebook({ user_id, caption, images }) {
   // Get page access token
-  const { data: accounts, error } = await supabase
+  const { data: accounts, error } = await supabaseAdmin
     .from('social_accounts')
     .select('*')
     .eq('user_id', user_id)
@@ -69,7 +70,7 @@ async function postToFacebook({ user_id, caption, images }) {
 
 async function postToInstagram({ user_id, caption, images }) {
   // Get instagram business account via social_accounts
-  const { data: accounts, error } = await supabase
+  const { data: accounts, error } = await supabaseAdmin
     .from('social_accounts')
     .select('*')
     .eq('user_id', user_id)
@@ -177,7 +178,7 @@ async function generateCaptionDE({ make, model }) {
 }
 
 async function runOnce(limit = 10) {
-  const { data: jobs } = await supabase
+  const { data: jobs } = await supabaseAdmin
     .from('social_post_jobs')
     .select('*')
     .eq('status', 'queued')
@@ -190,7 +191,7 @@ async function runOnce(limit = 10) {
     try {
       const attemptsNext = Number.isFinite(job?.attempts) ? (job.attempts + 1) : 1;
       {
-        const up = await supabase
+        const up = await supabaseAdmin
           .from('social_post_jobs')
           .update({ status: 'posting', attempts: attemptsNext, updated_at: new Date().toISOString() })
           .eq('id', job.id);
@@ -211,7 +212,7 @@ async function runOnce(limit = 10) {
         throw new Error(`Unsupported platform: ${job.platform}`);
       }
       {
-        const up = await supabase
+        const up = await supabaseAdmin
           .from('social_post_jobs')
           .update({ status: 'success', error: null, updated_at: new Date().toISOString(), result: result || null })
           .eq('id', job.id);
@@ -219,7 +220,7 @@ async function runOnce(limit = 10) {
           // Fallback if result column doesn't exist
           const msg = up.error.message || '';
           if (/result/i.test(msg)) {
-            const up2 = await supabase
+            const up2 = await supabaseAdmin
               .from('social_post_jobs')
               .update({ status: 'success', error: null, updated_at: new Date().toISOString() })
               .eq('id', job.id);
@@ -234,7 +235,7 @@ async function runOnce(limit = 10) {
       const msg = e?.response?.data ? JSON.stringify(e.response.data) : (e?.message || String(e));
       const attemptsNext = Number.isFinite(job?.attempts) ? (job.attempts + 1) : 1;
       const nextStatus = attemptsNext >= 3 ? 'failed' : 'queued';
-      await supabase
+      await supabaseAdmin
         .from('social_post_jobs')
         .update({ status: nextStatus, error: msg, updated_at: new Date().toISOString(), attempts: attemptsNext })
         .eq('id', job.id);
