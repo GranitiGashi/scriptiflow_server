@@ -160,4 +160,37 @@ exports.addNote = async (req, res) => {
   }
 };
 
+exports.update = async (req, res) => {
+  try {
+    const auth = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (auth.error) return res.status(auth.error.status || 401).json({ error: auth.error.message });
+    const user = auth.user;
+    const { id } = req.params;
+    const { first_name, last_name, email, phone, source } = req.body || {};
+    
+    // Build update object with only provided fields
+    const updates = { updated_at: new Date().toISOString() };
+    if (first_name !== undefined) updates.first_name = first_name;
+    if (last_name !== undefined) updates.last_name = last_name;
+    if (email !== undefined) updates.email = email;
+    if (phone !== undefined) updates.phone = phone;
+    if (source !== undefined) updates.source = source;
+    
+    const { data, error } = await supabaseAdmin
+      .from('crm_contacts')
+      .update(updates)
+      .eq('user_id', user.id)
+      .eq('id', id)
+      .select()
+      .single();
+      
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'Contact not found' });
+    
+    return res.json(data);
+  } catch (e) {
+    return res.status(500).json({ error: e.message || 'Failed to update contact' });
+  }
+};
+
 
