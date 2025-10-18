@@ -10,8 +10,24 @@ router.post('/login', authController.login);
 router.post('/refresh', authController.refresh);    
 router.post('/admin/invite', authController.inviteUser);
 // Apply conservative limits to sensitive endpoints
-router.post('/forgot-password', rateLimit({ windowMs: 60_000, max: 5 }), captchaRequired(), sameOrigin(), authController.forgotPassword);
-router.post('/set-password', rateLimit({ windowMs: 60_000, max: 10 }), sameOrigin(), authController.setPassword);
-router.post('/change-password', rateLimit({ windowMs: 60_000, max: 10 }), sameOrigin(), authController.changePassword);
+router.post(
+  '/forgot-password',
+  rateLimit({ windowMs: 60_000, max: 5 }),
+  captchaRequired(),
+  sameOrigin(process.env.NODE_ENV === 'production'),
+  authController.forgotPassword
+);
+router.post(
+  '/set-password',
+  rateLimit({ windowMs: 60_000, max: 10 }),
+  sameOrigin(process.env.NODE_ENV === 'production'),
+  authController.setPassword
+);
+router.post(
+  '/change-password',
+  rateLimit({ windowMs: 60_000, max: 10 }),
+  sameOrigin(process.env.NODE_ENV === 'production'),
+  authController.changePassword
+);
 
 module.exports = router;
