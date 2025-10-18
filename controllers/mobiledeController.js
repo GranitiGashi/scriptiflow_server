@@ -4,7 +4,7 @@ const supabaseAdmin = require('../config/supabaseAdmin');
 const { getUserFromRequest } = require('../utils/authUser');
 const { encrypt, decrypt } = require('../utils/crypto');
 const axios = require('axios');
-const supabaseAdmin = require('../config/supabaseAdmin');
+// const supabaseAdmin = require('../config/supabaseAdmin');
 
 async function fetchMobileDeListings(username, password, params = {}) {
   const auth = 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
