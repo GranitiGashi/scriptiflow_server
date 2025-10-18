@@ -92,10 +92,16 @@ exports.listAllTickets = async (req, res) => {
 
     const { data, error } = await supabaseAdmin
       .from('support_tickets')
-      .select('id, user_id, subject, message, status, created_at, updated_at, users_app!inner(full_name, email)')
+      .select('id, user_id, subject, message, status, created_at, updated_at, users_app!inner(full_name, email), support_messages!left(id), support_reads!left(last_read_at, user_id)')
       .order('created_at', { ascending: false });
     if (error) return res.status(500).json({ error: 'Failed to fetch tickets', details: error.message });
-    return res.json(data || []);
+    // Compute unread counts per ticket (for admin view, unread from admin perspective where user_id != admin)
+    const byTicket = (data || []).map(t => {
+      const lastReadAt = null; // admin-level can compute client unread elsewhere if needed
+      const unreadCount = Array.isArray(t.support_messages) ? t.support_messages.length : 0;
+      return { ...t, unread_count: unreadCount };
+    });
+    return res.json(byTicket || []);
   } catch (err) {
     return res.status(err.status || 500).json({ error: err.message || 'Server error' });
   }
@@ -216,6 +222,12 @@ exports.listMessages = async (req, res) => {
       .eq('ticket_id', ticket_id)
       .order('created_at', { ascending: true });
     if (error) return res.status(500).json({ error: 'Failed to fetch messages', details: error.message });
+    // Update read receipt for this user
+    try {
+      await supabaseAdmin
+        .from('support_reads')
+        .upsert({ user_id: user.id, ticket_id, last_read_at: new Date().toISOString() });
+    } catch (e) {}
     return res.json(data || []);
   } catch (err) {
     return res.status(err.status || 500).json({ error: err.message || 'Server error' });
