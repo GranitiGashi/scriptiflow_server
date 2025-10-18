@@ -92,7 +92,12 @@ exports.listAllTickets = async (req, res) => {
 
     const { data, error } = await supabaseAdmin
       .from('support_tickets')
-      .select('id, user_id, subject, message, status, created_at, updated_at, users_app!inner(full_name, email), support_messages!left(id), support_reads!left(last_read_at, user_id)')
+      .select(`
+        id, user_id, subject, message, status, created_at, updated_at,
+        users_app:users_app!support_tickets_user_id_fkey ( full_name, email ),
+        support_messages:support_messages!support_messages_ticket_id_fkey ( id, created_at ),
+        support_reads:support_reads!support_reads_ticket_id_fkey ( last_read_at, user_id )
+      `)
       .order('created_at', { ascending: false });
     if (error) return res.status(500).json({ error: 'Failed to fetch tickets', details: error.message });
     // Compute unread counts per ticket (for admin view, unread from admin perspective where user_id != admin)
