@@ -18,23 +18,29 @@ exports.list = async (req, res) => {
     if (auth.error) return res.status(auth.error.status || 401).json({ error: auth.error.message });
     const user = auth.user;
     const { q, source, hasEmail, hasPhone, includeDeleted, limit = 50, offset = 0 } = req.query;
-    let query = supabase.from('crm_contacts').select('id, first_name, last_name, email, phone, source, created_at, updated_at, deleted_at').eq('user_id', user.id).order('created_at', { ascending: false }).range(Number(offset), Number(offset) + Number(limit) - 1);
-    const filters = buildContactFilters({ q, source, hasEmail, hasPhone, includeDeleted });
-    for (const f of filters) {
-      if (f.type === 'eq') query = query.eq(f.col, f.value);
-      if (f.type === 'is') query = query.is(f.col, f.value);
-      if (f.type === 'not') query = query.not(f.col, f.op, f.value);
-      if (f.type === 'ilike_any') {
-        // emulate OR by fetching wide and filtering locally (Supabase JS lacks ilike-any-or)
-      }
-    }
+    let query = supabase
+      .from('crm_contacts')
+      .select('id, first_name, last_name, email, phone, source, created_at, updated_at, deleted_at')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .range(Number(offset), Number(offset) + Number(limit) - 1);
+    
+    // Apply filters
+    if (source) query = query.eq('source', source);
+    if (hasEmail === 'true') query = query.not('email', 'is', null).neq('email', '');
+    if (hasPhone === 'true') query = query.not('phone', 'is', null).neq('phone', '');
+    if (includeDeleted !== 'true') query = query.is('deleted_at', null);
+    
     const { data, error } = await query;
     if (error) return res.status(500).json({ error: error.message });
     let rows = data || [];
+    
+    // Apply text search filter locally (for OR logic across multiple columns)
     if (q && q.trim()) {
       const qq = q.trim().toLowerCase();
       rows = rows.filter(r => [r.first_name, r.last_name, r.email, r.phone].some(v => (v || '').toLowerCase().includes(qq)));
     }
+    
     return res.json(rows);
   } catch (e) {
     return res.status(500).json({ error: e.message || 'Failed to load contacts' });
