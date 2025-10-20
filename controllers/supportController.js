@@ -2,6 +2,10 @@ const supabase = require('../config/supabaseClient');
 const supabaseAdmin = require('../config/supabaseAdmin');
 const { getUserFromRequest } = require('../utils/authUser');
 const { sendEmail } = require('../utils/email');
+const { renderSupportTicketCreatedEmail } = require('../utils/emailTemplates/supportTicketCreated');
+const { renderSupportTicketReplyEmail } = require('../utils/emailTemplates/supportTicketReply');
+const { renderSupportTicketResolvedEmail } = require('../utils/emailTemplates/supportTicketResolved');
+const { renderSupportAdminNotificationEmail } = require('../utils/emailTemplates/supportAdminNotification');
 
 async function getCurrentUser(req) {
   const { user, error } = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
@@ -30,26 +34,53 @@ exports.createTicket = async (req, res) => {
     if (error) {
       return res.status(500).json({ error: 'Failed to create ticket', details: error.message });
     }
-    // Send acknowledgement email
+    // Send acknowledgement email with beautiful template
     try {
+      const { data: userData } = await supabaseAdmin
+        .from('users_app')
+        .select('full_name')
+        .eq('id', user.id)
+        .single();
+      
+      const emailHtml = renderSupportTicketCreatedEmail({
+        recipientName: userData?.full_name,
+        subject: subject,
+        message: message,
+        ticketId: data.id
+      });
+      
       await sendEmail({
         to: user.email,
-        subject: `Support ticket received: ${subject}`,
+        subject: `Support Ticket Received - ${subject}`,
         text: `Thanks for contacting support. We received your ticket and will respond soon.\n\nSubject: ${subject}\nMessage: ${message}`,
-        html: `<p>Thanks for contacting support. We received your ticket and will respond soon.</p><p><strong>Subject:</strong> ${subject}</p><p><strong>Message:</strong><br/>${message.replace(/\n/g, '<br/>')}</p>`
+        html: emailHtml
       });
     } catch (e) {
       console.log('Email send skipped/failed:', e?.message || e);
     }
-    // Notify admins by email (optional: use a configured admin email)
+    // Notify admins by email with beautiful template
     try {
       const adminEmail = process.env.ADMIN_NOTIFICATIONS_EMAIL;
       if (adminEmail) {
+        const { data: userData } = await supabaseAdmin
+          .from('users_app')
+          .select('full_name')
+          .eq('id', user.id)
+          .single();
+        
+        const emailHtml = renderSupportAdminNotificationEmail({
+          userEmail: user.email,
+          userName: userData?.full_name,
+          subject: subject,
+          message: message,
+          ticketId: data.id
+        });
+        
         await sendEmail({
           to: adminEmail,
-          subject: `New support ticket: ${subject}`,
+          subject: `New Support Ticket: ${subject}`,
           text: `A new ticket was created by ${user.email}.\n\n${message}`,
-          html: `<p>A new ticket was created by ${user.email}.</p><p>${message.replace(/\n/g, '<br/>')}</p>`
+          html: emailHtml
         });
       }
     } catch (e) {
@@ -191,15 +222,22 @@ exports.addMessage = async (req, res) => {
         if (isFirstAdminReply) {
           const { data: tUser } = await supabaseAdmin
             .from('users_app')
-            .select('email')
+            .select('email, full_name')
             .eq('id', ticket.user_id)
             .single();
           if (tUser?.email) {
+            const emailHtml = renderSupportTicketReplyEmail({
+              recipientName: tUser.full_name,
+              subject: ticket.subject,
+              message: message,
+              ticketId: ticket_id
+            });
+            
             await sendEmail({
               to: tUser.email,
-              subject: `Update on your support ticket: ${ticket.subject}`,
+              subject: `New Reply to Your Support Ticket: ${ticket.subject}`,
               text: `We have responded to your ticket.\n\nMessage:\n${message}\n\nView and reply at your support dashboard.`,
-              html: `<p>We have responded to your ticket.</p><p><strong>Message:</strong><br/>${message.replace(/\n/g, '<br/>')}</p><p>View and reply at your support dashboard.</p>`
+              html: emailHtml
             });
           }
         }
@@ -285,15 +323,21 @@ exports.updateStatus = async (req, res) => {
       if (status === 'closed') {
         const { data: tUser } = await supabaseAdmin
           .from('users_app')
-          .select('email')
+          .select('email, full_name')
           .eq('id', ticket.user_id)
           .single();
         if (tUser?.email) {
+          const emailHtml = renderSupportTicketResolvedEmail({
+            recipientName: tUser.full_name,
+            subject: ticket.subject,
+            ticketId: ticket_id
+          });
+          
           await sendEmail({
             to: tUser.email,
-            subject: `Your support ticket has been resolved`,
+            subject: `Support Ticket Resolved: ${ticket.subject}`,
             text: `Your support ticket ("${ticket.subject}") has been marked as resolved. If you need further assistance, feel free to create a new ticket.`,
-            html: `<p>Your support ticket ("<strong>${ticket.subject}</strong>") has been marked as resolved.</p><p>If you need further assistance, feel free to create a new ticket.</p>`
+            html: emailHtml
           });
         }
       }
