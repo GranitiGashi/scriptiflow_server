@@ -25,7 +25,15 @@ const { runOnce: runSocialWorkerOnce } = require('./worker/socialPoster');
 const app = express();
 // Disable ETag to avoid 304 on dynamic API responses
 app.set('etag', false);
-app.use(cors());
+
+// Configure CORS to allow credentials and specific origin
+const corsOptions = {
+  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  credentials: true,
+  optionsSuccessStatus: 200
+};
+app.use(cors(corsOptions));
+
 // Stripe webhook must be defined before express.json so body isn't parsed
 // const paymentController = require('./controllers/paymentController');
 app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), paymentController.stripeWebhook);
