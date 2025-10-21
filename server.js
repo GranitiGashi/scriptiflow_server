@@ -33,6 +33,7 @@ const allowedOrigins = [
   'http://localhost:3001',
   'https://www.scriptiflow.com',
   'https://scriptiflow.com',
+  'https://app.scriptiflow.com/'
 ].filter(Boolean); // Remove any undefined values
 
 const corsOptions = {
