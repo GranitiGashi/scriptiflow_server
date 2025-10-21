@@ -1,0 +1,96 @@
+╔══════════════════════════════════════════════════════════════╗
+║         REQUIRED ENVIRONMENT VARIABLES                        ║
+║         Create/Update: scriptiflow_server/.env                ║
+╚══════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────┐
+│ CRITICAL - MUST SET THESE FOR FORGOT PASSWORD TO WORK       │
+└─────────────────────────────────────────────────────────────┘
+
+FRONTEND_URL=http://localhost:3000
+  ↑ IMPORTANT: Must match your actual frontend URL exactly
+     - Include http:// or https://
+     - NO trailing slash
+     - Change to your production domain when deploying
+
+EMAIL_FROM=noreply@yourdomain.com
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USER=your_email@gmail.com
+EMAIL_PASSWORD=your_gmail_app_password
+  ↑ IMPORTANT: For Gmail, create an App Password at:
+     https://myaccount.google.com/apppasswords
+
+┌─────────────────────────────────────────────────────────────┐
+│ OTHER REQUIRED VARIABLES (You probably already have these)  │
+└─────────────────────────────────────────────────────────────┘
+
+PORT=8081
+NODE_ENV=development
+SUPABASE_URL=your_supabase_url
+SUPABASE_ANON_KEY=your_key
+SUPABASE_SERVICE_ROLE_KEY=your_key
+SUPABASE_JWT_SECRET=your_secret
+
+┌─────────────────────────────────────────────────────────────┐
+│ OPTIONAL VARIABLES (Can be added later)                     │
+└─────────────────────────────────────────────────────────────┘
+
+STATE_TOKEN_SECRET=random_secret_for_extra_security
+CAPTCHA_PROVIDER=recaptcha
+CAPTCHA_SECRET=your_captcha_secret
+
+╔══════════════════════════════════════════════════════════════╗
+║                    QUICK SETUP                                ║
+╚══════════════════════════════════════════════════════════════╝
+
+1. Go to scriptiflow_server directory
+2. Create .env file (or edit existing)
+3. Copy the variables above and fill in your values
+4. Save the file
+5. Restart your server: npm start
+6. Test forgot password feature
+
+╔══════════════════════════════════════════════════════════════╗
+║                    EXAMPLE .env FILE                          ║
+╚══════════════════════════════════════════════════════════════╝
+
+PORT=8081
+NODE_ENV=development
+FRONTEND_URL=http://localhost:3000
+
+SUPABASE_URL=https://xxxxx.supabase.co
+SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+SUPABASE_JWT_SECRET=your-secret-here
+
+EMAIL_FROM=noreply@scriptflow.com
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USER=yourapp@gmail.com
+EMAIL_PASSWORD=abcd efgh ijkl mnop
+
+╔══════════════════════════════════════════════════════════════╗
+║                    TROUBLESHOOTING                            ║
+╚══════════════════════════════════════════════════════════════╝
+
+❌ Still getting 403 error?
+   → Check FRONTEND_URL matches your frontend exactly
+   → Restart server after changing .env
+   → Check browser console for actual Origin header
+
+❌ Email not sending?
+   → For Gmail, use App Password (not regular password)
+   → Check EMAIL_HOST, EMAIL_PORT, EMAIL_USER, EMAIL_PASSWORD
+   → Check spam folder
+
+✅ Success looks like:
+   → No 403 error in browser console
+   → Success message shown on screen
+   → Password reset email received in inbox
+
+For more help, see:
+- QUICK_START_FIX.md
+- scriptiflow_server/SETUP.md
+- CORS_FIX_SUMMARY.md
+

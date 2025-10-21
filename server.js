@@ -26,16 +26,32 @@ const app = express();
 // Disable ETag to avoid 304 on dynamic API responses
 app.set('etag', false);
 
-// Configure CORS properly for production
+// Configure CORS to allow credentials and multiple origins
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'https://www.scriptiflow.com',
+  'https://scriptiflow.com',
+].filter(Boolean); // Remove any undefined values
+
 const corsOptions = {
-  origin: process.env.NODE_ENV === 'production' 
-    ? ['https://app.scriptiflow.com', 'https://scriptiflow.com']
-    : true, // Allow all origins in development
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.warn(`CORS blocked origin: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Refresh-Token']
+  optionsSuccessStatus: 200
 };
 app.use(cors(corsOptions));
+
 // Stripe webhook must be defined before express.json so body isn't parsed
 // const paymentController = require('./controllers/paymentController');
 app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), paymentController.stripeWebhook);
