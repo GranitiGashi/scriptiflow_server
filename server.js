@@ -25,7 +25,17 @@ const { runOnce: runSocialWorkerOnce } = require('./worker/socialPoster');
 const app = express();
 // Disable ETag to avoid 304 on dynamic API responses
 app.set('etag', false);
-app.use(cors());
+
+// Configure CORS properly for production
+const corsOptions = {
+  origin: process.env.NODE_ENV === 'production' 
+    ? ['https://app.scriptiflow.com', 'https://scriptiflow.com']
+    : true, // Allow all origins in development
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Refresh-Token']
+};
+app.use(cors(corsOptions));
 // Stripe webhook must be defined before express.json so body isn't parsed
 // const paymentController = require('./controllers/paymentController');
 app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), paymentController.stripeWebhook);
@@ -54,6 +64,11 @@ app.use((req, res, next) => {
     bodyKeys: Object.keys(req.body || {})
   });
   next();
+});
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 app.use('/api', authRoutes);
