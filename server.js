@@ -33,6 +33,7 @@ const allowedOrigins = [
   'http://localhost:3001',
   'https://www.scriptiflow.com',
   'https://scriptiflow.com',
+  'https://app.scriptiflow.com/'
 ].filter(Boolean); // Remove any undefined values
 
 const corsOptions = {
@@ -80,6 +81,11 @@ app.use((req, res, next) => {
     bodyKeys: Object.keys(req.body || {})
   });
   next();
+});
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 app.use('/api', authRoutes);

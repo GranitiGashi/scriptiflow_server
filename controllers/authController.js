@@ -88,15 +88,31 @@ async function register(req, res) {
 async function login(req, res) {
   const { email, password } = req.body;
 
-  const { data: sessionData, error: authError } = await supabase.auth.signInWithPassword({
-    email,
-    password,
-  });
-
-  if (authError) {
-    console.error('Supabase Auth Error:', authError.message);
-    return res.status(401).json({ error: authError.message });
+  // Validate input
+  if (!email || !password) {
+    console.error('Login attempt with missing credentials');
+    return res.status(400).json({ error: 'Email and password are required' });
   }
+
+  try {
+    const { data: sessionData, error: authError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (authError) {
+      console.error('Supabase Auth Error:', {
+        message: authError.message,
+        status: authError.status,
+        email: email // Log email for debugging (be careful in production)
+      });
+      return res.status(401).json({ error: authError.message });
+    }
+
+    if (!sessionData?.session || !sessionData?.user) {
+      console.error('Login successful but session/user data missing');
+      return res.status(500).json({ error: 'Authentication failed - invalid session data' });
+    }
 
   // Get user metadata from users_app table; auto-provision if missing
   let { data: userData, error: userError } = await supabase
@@ -122,14 +138,22 @@ async function login(req, res) {
     }
   }
 
-  return res.status(200).json({
-    status: 'success',
-    access_token: sessionData.session.access_token,
-    refresh_token: sessionData.session.refresh_token,
-    expires_in: sessionData.session.expires_in,
-    expires_at: sessionData.session.expires_at,
-    user: userData,
-  });
+    console.log('Login successful for user:', sessionData.user.id);
+    return res.status(200).json({
+      status: 'success',
+      access_token: sessionData.session.access_token,
+      refresh_token: sessionData.session.refresh_token,
+      expires_in: sessionData.session.expires_in,
+      expires_at: sessionData.session.expires_at,
+      user: userData,
+    });
+  } catch (err) {
+    console.error('Login error:', {
+      message: err.message,
+      stack: err.stack
+    });
+    return res.status(500).json({ error: 'Internal server error during login' });
+  }
 }
 
 async function refresh(req, res) {
