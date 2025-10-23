@@ -121,13 +121,13 @@ function getSyncMessage(googleEventId, outlookEventId) {
   const outlook = !!outlookEventId;
   
   if (google && outlook) {
-    return 'Event synced to Google Calendar, Outlook Calendar, and local database';
+    return '✅ Event synced to Google Calendar, Outlook Calendar, and local database';
   } else if (google) {
-    return 'Event synced to Google Calendar and local database';
+    return '✅ Event synced to Google Calendar and local database';
   } else if (outlook) {
-    return 'Event synced to Outlook Calendar and local database';
+    return '✅ Event synced to Outlook Calendar and local database';
   } else {
-    return 'Event created in local database only';
+    return '✅ Event created in local database only';
   }
 }
 
@@ -137,15 +137,17 @@ exports.listEvents = async (req, res) => {
     if (auth.error) return res.status(auth.error.status || 401).json({ error: auth.error.message });
     const user = auth.user;
     
-    // Try to sync with Google Calendar if credentials are available
+    // Try to sync with Google Calendar if Gmail is connected
     try {
-      if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+      const tokens = await getGmailTokens(user.id);
+      if (tokens && process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
         const cal = await getAuthedCalendar(user.id);
         const now = new Date();
         const past = new Date(now.getTime() - 30 * 24 * 3600 * 1000).toISOString();
         const future = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
         const { data } = await cal.events.list({ calendarId: 'primary', timeMin: past, timeMax: future, singleEvents: true, orderBy: 'startTime', maxResults: 2500 });
 
+        console.log('🔄 Syncing Google Calendar events...');
         // upsert into local DB for quick retrieval
         const items = Array.isArray(data.items) ? data.items : [];
         for (const ev of items) {
@@ -182,13 +184,14 @@ exports.listEvents = async (req, res) => {
         }
       }
     } catch (googleError) {
-      console.log('Google Calendar sync failed, returning local events only:', googleError.message);
+      console.log('❌ Google Calendar sync failed:', googleError.message);
       // Continue with local events retrieval
     }
 
-    // Try to sync with Outlook Calendar if credentials are available
+    // Try to sync with Outlook Calendar if Outlook is connected
     try {
-      if (process.env.OUTLOOK_CLIENT_ID && process.env.OUTLOOK_CLIENT_SECRET) {
+      const outlookTokens = await getOutlookTokens(user.id);
+      if (outlookTokens && process.env.OUTLOOK_CLIENT_ID && process.env.OUTLOOK_CLIENT_SECRET) {
         const outlook = await getAuthedOutlookCalendar(user.id);
         const now = new Date();
         const past = new Date(now.getTime() - 30 * 24 * 3600 * 1000).toISOString();
@@ -204,6 +207,7 @@ exports.listEvents = async (req, res) => {
           }
         );
 
+        console.log('🔄 Syncing Outlook Calendar events...');
         const events = Array.isArray(outlookResponse.data.value) ? outlookResponse.data.value : [];
         for (const ev of events) {
           const start = ev.start?.dateTime || null;
@@ -237,7 +241,7 @@ exports.listEvents = async (req, res) => {
         }
       }
     } catch (outlookError) {
-      console.log('Outlook Calendar sync failed, returning local events only:', outlookError.message);
+      console.log('❌ Outlook Calendar sync failed:', outlookError.message);
       // Continue with local events retrieval
     }
 
@@ -308,26 +312,35 @@ exports.createEvent = async (req, res) => {
     let outlook_event_id = null;
     let finalContactId = contact_id || null;
     
-    // Try to create Google Calendar event if credentials are available
+    // Try to create Google Calendar event if Gmail is connected
     try {
-      if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+      const tokens = await getGmailTokens(user.id);
+      if (tokens && process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
         const cal = await getAuthedCalendar(user.id);
-        const requestBody = { summary: title, description, location, start: { dateTime: start_time }, end: { dateTime: end_time } };
+        const requestBody = { 
+          summary: title, 
+          description: description || '', 
+          location: location || '', 
+          start: { dateTime: start_time }, 
+          end: { dateTime: end_time } 
+        };
         if (customer_email) {
           requestBody.attendees = [{ email: customer_email, displayName: customer_name || undefined }];
         }
         
         const g = await cal.events.insert({ calendarId: 'primary', requestBody });
         google_event_id = g.data.id;
+        console.log('✅ Event created in Google Calendar:', google_event_id);
       }
     } catch (googleError) {
-      console.log('Google Calendar not available, creating local event only:', googleError.message);
+      console.log('❌ Google Calendar sync failed:', googleError.message);
       // Continue with local event creation even if Google Calendar fails
     }
     
-    // Try to create Outlook Calendar event if credentials are available
+    // Try to create Outlook Calendar event if Outlook is connected
     try {
-      if (process.env.OUTLOOK_CLIENT_ID && process.env.OUTLOOK_CLIENT_SECRET) {
+      const outlookTokens = await getOutlookTokens(user.id);
+      if (outlookTokens && process.env.OUTLOOK_CLIENT_ID && process.env.OUTLOOK_CLIENT_SECRET) {
         const outlook = await getAuthedOutlookCalendar(user.id);
         const eventData = {
           subject: title,
@@ -350,9 +363,10 @@ exports.createEvent = async (req, res) => {
         );
         
         outlook_event_id = outlookResponse.data.id;
+        console.log('✅ Event created in Outlook Calendar:', outlook_event_id);
       }
     } catch (outlookError) {
-      console.log('Outlook Calendar not available, creating local event only:', outlookError.message);
+      console.log('❌ Outlook Calendar sync failed:', outlookError.message);
       // Continue with local event creation even if Outlook Calendar fails
     }
     
