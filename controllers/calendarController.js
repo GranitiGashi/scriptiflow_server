@@ -50,6 +50,14 @@ exports.listEvents = async (req, res) => {
     const auth = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
     if (auth.error) return res.status(auth.error.status || 401).json({ error: auth.error.message });
     const user = auth.user;
+    
+    // Check if Gmail is connected
+    const tokens = await getGmailTokens(user.id);
+    if (!tokens) {
+      // Return empty array if Gmail not connected
+      return res.json([]);
+    }
+    
     const cal = await getAuthedCalendar(user.id);
     const now = new Date();
     const past = new Date(now.getTime() - 30 * 24 * 3600 * 1000).toISOString();
@@ -139,18 +147,44 @@ exports.createEvent = async (req, res) => {
     const user = auth.user;
     const { title, description, location, start_time, end_time, car_mobile_de_id, contact_id, customer_name, customer_email } = req.body || {};
     if (!title || !start_time || !end_time) return res.status(400).json({ error: 'title, start_time, end_time required' });
-    const cal = await getAuthedCalendar(user.id);
-    const requestBody = { summary: title, description, location, start: { dateTime: start_time }, end: { dateTime: end_time } };
-    if (customer_email) {
-      requestBody.attendees = [{ email: customer_email, displayName: customer_name || undefined }];
+    
+    // Check if Gmail is connected
+    const tokens = await getGmailTokens(user.id);
+    let google_event_id = null;
+    
+    if (tokens) {
+      // Gmail is connected, create in Google Calendar
+      try {
+        const cal = await getAuthedCalendar(user.id);
+        const requestBody = { summary: title, description, location, start: { dateTime: start_time }, end: { dateTime: end_time } };
+        if (customer_email) {
+          requestBody.attendees = [{ email: customer_email, displayName: customer_name || undefined }];
+        }
+        const g = await cal.events.insert({ calendarId: 'primary', requestBody });
+        google_event_id = g.data.id;
+      } catch (gmailError) {
+        console.log('Gmail sync failed, creating local event only:', gmailError.message);
+      }
     }
-    const g = await cal.events.insert({ calendarId: 'primary', requestBody });
-    const google_event_id = g.data.id;
+    
     let finalContactId = contact_id || null;
     if (!finalContactId && (customer_email || customer_name)) {
       finalContactId = await findOrCreateContact(user.id, { name: customer_name || null, email: customer_email || null });
     }
-    const { data: created, error } = await supabaseAdmin.from('calendar_events').insert({ user_id: user.id, google_event_id, calendar_id: 'primary', title, description, location, start_time, end_time, car_mobile_de_id: car_mobile_de_id || null, contact_id: finalContactId || null }).select('id').single();
+    
+    const { data: created, error } = await supabaseAdmin.from('calendar_events').insert({ 
+      user_id: user.id, 
+      google_event_id, 
+      calendar_id: 'primary', 
+      title, 
+      description, 
+      location, 
+      start_time, 
+      end_time, 
+      car_mobile_de_id: car_mobile_de_id || null, 
+      contact_id: finalContactId || null 
+    }).select('id').single();
+    
     if (error) return res.status(500).json({ error: error.message });
     return res.json({ id: created.id, google_event_id });
   } catch (e) {
