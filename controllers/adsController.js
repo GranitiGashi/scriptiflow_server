@@ -118,10 +118,152 @@ exports.recommendAdPlan = async (req, res) => {
     const { user, error } = await getSupabaseUser(req);
     if (error) return res.status(error.status).json({ error: error.message });
 
-    const { car, objective, country = 'DE', language = 'de' } = req.body;
-    if (!car || !car.title) return res.status(400).json({ error: 'Missing car payload' });
+    const { car, context, objective, country = 'DE', language = 'de', request_details = {} } = req.body;
+    
+    // Validation
+    if (!car) {
+      console.error('❌ Missing car payload');
+      return res.status(400).json({ error: 'Missing car payload' });
+    }
+    
+    if (!car.title && !car.full_name && !car.make) {
+      console.error('❌ Invalid car data - missing vehicle name');
+      return res.status(400).json({ error: 'Invalid car data' });
+    }
 
-    const prompt = `You are a senior performance marketer specializing in automotive. Create a concrete Facebook ads plan (strict JSON) for the car below. Tailor targeting to the dealership location, using a radius geo-target if lat/lon are available, otherwise use the country. Use specific copy based on specs (mileage, fuel, power, gearbox), and a compelling CTA.
+    // Smart AI with comprehensive context
+    const isSmartMode = objective === 'smart_auto' && context;
+    
+    console.log(`🤖 AI Recommendation Mode: ${isSmartMode ? 'SMART (GPT-4o)' : 'BASIC (GPT-4o-mini)'}`);
+    if (isSmartMode) {
+      console.log('📊 Smart Mode Context:', {
+        vehicle: car.full_name,
+        market_segment: car.market?.segment,
+        ad_format: context.ad_type,
+        budget: context.budget?.total,
+        images: car.images?.selected_count
+      });
+    }
+    
+    let prompt;
+    if (isSmartMode) {
+      // ADVANCED SMART MODE - Use all the intelligence from frontend
+      prompt = `You are an expert automotive digital marketing strategist with deep expertise in Facebook & Instagram advertising. Create a highly optimized, data-driven ad campaign plan based on comprehensive market analysis.
+
+⚠️ CRITICAL: You MUST calculate budget and duration based on the ACTUAL vehicle price shown below. DO NOT use generic values!
+
+🚗 VEHICLE INTELLIGENCE:
+${car.full_name ? `- Vehicle: ${car.full_name}` : ''}
+${car.specifications ? `
+- Year: ${car.specifications.year} (${car.specifications.age_years} years old)
+- Mileage: ${car.specifications.mileage_km.toLocaleString()} km
+- Fuel: ${car.specifications.fuel_type}
+- Power: ${car.specifications.power}
+- Transmission: ${car.specifications.transmission}
+${car.specifications.is_electric ? '- ⚡ ELECTRIC VEHICLE' : ''}
+${car.specifications.is_hybrid ? '- 🔋 HYBRID VEHICLE' : ''}
+` : ''}
+
+📊 MARKET ANALYSIS:
+- 💰 VEHICLE PRICE: €${car.market?.price_eur?.toLocaleString() || 'N/A'} ← USE THIS FOR BUDGET CALCULATION!
+- Market Segment: ${car.market?.segment?.toUpperCase() || 'STANDARD'}
+- Vehicle Condition: ${car.market?.condition || 'GOOD'}
+- Value Proposition: ${car.market?.value_proposition || 'quality'}
+${car.market?.is_premium_brand ? '- ✨ PREMIUM BRAND' : ''}
+
+🎯 TARGET AUDIENCE:
+- Primary Target: ${car.audience?.primary_target || 'car buyers'}
+- Age Range: ${car.audience?.age_range || '25-50'}
+- Income Level: ${car.audience?.income_level || 'medium'}
+${car.audience?.interests?.length > 0 ? `- Interests: ${car.audience.interests.join(', ')}` : ''}
+
+📍 GEOGRAPHIC TARGETING:
+${car.location?.has_coordinates ? `- Radius Targeting: ${car.location.radius_km}km from dealer` : `- Country: ${country}`}
+- Type: ${car.location?.targeting_type || 'country'}
+
+💰 CAMPAIGN BUDGET:
+- Total Budget: €${context?.budget?.total || 100}
+- Daily Budget: €${context?.budget?.daily || 15}
+- Duration: ${context?.budget?.duration_days || 7} days
+- Strategy: ${context?.budget?.range || 'moderate'}
+
+🎨 CREATIVE ASSETS:
+- Ad Format: ${context?.ad_type || 'single_image'}
+- Total Images Available: ${car.images?.total_count || 1}
+- Selected Images: ${car.images?.selected_count || 1}
+${context?.ad_type === 'carousel' || context?.ad_type === 'multi_carousel' ? '- 🎠 CAROUSEL AD (show multiple angles!)' : ''}
+
+🎯 CAMPAIGN OBJECTIVES:
+- Primary: ${context?.objectives?.primary || 'conversions'}
+- Secondary: ${context?.objectives?.secondary || 'traffic'}
+- KPI: ${context?.objectives?.kpi || 'cost_per_lead'}
+
+🏆 COMPETITIVE STRATEGY:
+- Market Density: ${context?.competitive?.market_density || 'medium'}
+${context?.competitive?.differentiation?.length > 0 ? `- Key Differentiators: ${context.competitive.differentiation.join(', ')}` : ''}
+
+⏰ TIMING INTELLIGENCE:
+- Season: ${context?.timing?.season || 'regular'}
+- Optimal Posting: ${context?.timing?.optimal_posting || 'weekday_morning'}
+
+${request_details?.creative_style ? `\n🎨 CREATIVE STYLE: ${request_details.creative_style}` : ''}
+${request_details?.urgency_level ? `\n⚡ URGENCY LEVEL: ${request_details.urgency_level}` : ''}
+
+TASK: Create a HIGHLY OPTIMIZED ad campaign that:
+1. Uses precise audience targeting based on the vehicle's market segment and price point
+2. Crafts compelling, specific copy that highlights the vehicle's unique selling points
+3. Leverages the ${context?.ad_type || 'single_image'} format effectively
+4. Maximizes ROI with smart budget allocation
+5. Uses psychological triggers relevant to the target audience
+6. Includes A/B testing suggestions if requested
+
+🎯 BUDGET CALCULATION RULES (VERY IMPORTANT):
+Calculate daily_budget_cents based on vehicle price:
+- Budget cars (€0-€15k): 800-1500 cents/day (€8-15/day)
+- Mid-range (€15k-€30k): 1500-2500 cents/day (€15-25/day)
+- Premium (€30k-€50k): 2500-4000 cents/day (€25-40/day)
+- Luxury (€50k+): 4000-7000 cents/day (€40-70/day)
+
+DURATION RULES:
+- Budget/Used cars: 7-10 days
+- Mid-range: 10-14 days
+- Premium/Luxury: 14-21 days
+
+BE PRECISE: Calculate exact amounts based on the specific car's price, not generic values!
+
+Return ONLY valid JSON (no code fences):
+{
+  "objective": "OUTCOME_TRAFFIC" | "OUTCOME_LEADS" | "OUTCOME_SALES",
+  "target_audience": {
+    "age": "min-max",
+    "gender": "male" | "female" | "all",
+    "interests": [array of relevant interests],
+    "behaviors": [array of relevant behaviors]
+  },
+  "placements": ["facebook_feeds","instagram_feeds","facebook_reels","instagram_stories"],
+  "duration_days": number (7-21 based on vehicle price),
+  "daily_budget_cents": number (800-7000 based on vehicle price - BE PRECISE!),
+  "special_ad_categories": [],
+  "creative": {
+    "primary_text": "Engaging 2-3 sentence copy that speaks to the target audience's desires and pain points, mentions specific vehicle features",
+    "headline": "Attention-grabbing headline (max 40 chars)",
+    "description": "Compelling one-liner (max 30 chars)",
+    "CTA": "LEARN_MORE" | "CONTACT_US" | "CALL_NOW" | "WHATSAPP_MESSAGE"
+  },
+  "campaign_name": "Strategic campaign name",
+  "adset_name": "Descriptive adset name",
+  "ad_name": "Specific ad name",
+  "targeting_strategy": "Brief explanation of why this targeting works",
+  "expected_performance": {
+    "estimated_reach": number,
+    "estimated_ctr": "X.X%",
+    "estimated_conversions": number
+  },
+  "optimization_tips": [array of 2-3 actionable tips]
+}`;
+    } else {
+      // BASIC MODE - Legacy simple prompt
+      prompt = `You are a senior performance marketer specializing in automotive. Create a concrete Facebook ads plan (strict JSON) for the car below. Tailor targeting to the dealership location, using a radius geo-target if lat/lon are available, otherwise use the country. Use specific copy based on specs (mileage, fuel, power, gearbox), and a compelling CTA.
 
 Strictly return JSON with these fields only:
 {
@@ -156,42 +298,127 @@ Rules:
 - If car.dealerLat & car.dealerLon exist (frontend will set), plan for radius targeting ~25km (frontend will implement). Otherwise keep country-based.
 - Keep daily_budget_cents realistic (e.g., 1000-5000) unless specs suggest otherwise.
 - Output must be valid JSON only, no comments, no code fences.`;
+    }
 
+    console.log('🔄 Calling OpenAI...');
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: isSmartMode ? 'gpt-4o' : 'gpt-4o-mini',
       messages: [
-        { role: 'system', content: 'Return strictly valid JSON only. Do not include code fences.' },
+        { role: 'system', content: 'You are an expert automotive marketing strategist. Return strictly valid JSON only. Do not include code fences, comments, or explanations. The JSON must be parseable.' },
         { role: 'user', content: prompt },
       ],
-      temperature: 0.4,
+      temperature: isSmartMode ? 0.6 : 0.4,
+      max_tokens: isSmartMode ? 2000 : 1500,
     });
+
+    if (!completion.choices || completion.choices.length === 0) {
+      console.error('❌ No response from OpenAI');
+      return res.status(500).json({ error: 'No response from AI service' });
+    }
 
     let proposal;
     try {
-      let content = completion.choices?.[0]?.message?.content || '';
+      let content = completion.choices[0]?.message?.content || '';
+      console.log('📝 Raw AI response length:', content.length);
+      
       content = content.trim();
-      // Strip code fences if present
+      
+      // Strip code fences if present (multiple variations)
       if (content.startsWith('```')) {
-        // Remove leading ```[lang]? and trailing ```
-        content = content.replace(/^```[a-zA-Z]*\s*/m, '').replace(/\s*```$/m, '').trim();
+        content = content.replace(/^```[a-zA-Z]*\n?/m, '').replace(/\n?```$/m, '').trim();
       }
-      // Fallback: extract first JSON object
+      
+      // Remove any markdown formatting
+      content = content.replace(/^```json\s*/i, '').replace(/\s*```$/i, '');
+      
+      // Fallback: extract first JSON object if surrounded by text
       if (!(content.startsWith('{') || content.startsWith('['))) {
         const firstBrace = content.indexOf('{');
         const lastBrace = content.lastIndexOf('}');
         if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
           content = content.slice(firstBrace, lastBrace + 1);
+        } else {
+          console.error('❌ Could not find JSON in response');
+          return res.status(500).json({ error: 'AI returned non-JSON response' });
         }
       }
+      
       proposal = JSON.parse(content);
+      
+      // Validate essential fields
+      if (!proposal.creative) {
+        console.warn('⚠️ Missing creative field in AI response');
+        proposal.creative = {
+          primary_text: proposal.primary_text || 'Check out this vehicle!',
+          headline: proposal.headline || 'Quality Car for Sale',
+          description: proposal.description || 'Contact us today',
+          CTA: proposal.CTA || 'LEARN_MORE'
+        };
+      }
+      
+      if (!proposal.objective) {
+        proposal.objective = 'OUTCOME_TRAFFIC';
+      }
+      
+      // Smart budget validation based on car price
+      const carPrice = car.market?.price_eur || 0;
+      if (carPrice > 0 && proposal.daily_budget_cents) {
+        const dailyBudgetEur = proposal.daily_budget_cents / 100;
+        
+        // Check if budget is reasonable for the car price
+        let expectedMinBudget = 8;
+        let expectedMaxBudget = 15;
+        
+        if (carPrice >= 50000) {
+          expectedMinBudget = 40;
+          expectedMaxBudget = 70;
+        } else if (carPrice >= 30000) {
+          expectedMinBudget = 25;
+          expectedMaxBudget = 40;
+        } else if (carPrice >= 15000) {
+          expectedMinBudget = 15;
+          expectedMaxBudget = 25;
+        }
+        
+        // If budget is outside reasonable range, adjust it
+        if (dailyBudgetEur < expectedMinBudget || dailyBudgetEur > expectedMaxBudget * 1.5) {
+          const adjustedBudget = Math.floor((expectedMinBudget + expectedMaxBudget) / 2);
+          console.warn(`⚠️ AI budget €${dailyBudgetEur}/day seems off for €${carPrice} car. Adjusting to €${adjustedBudget}/day`);
+          proposal.daily_budget_cents = adjustedBudget * 100;
+        }
+      }
+      
+      // Duration validation
+      if (!proposal.duration_days || proposal.duration_days < 7 || proposal.duration_days > 21) {
+        const carPrice = car.market?.price_eur || 0;
+        if (carPrice >= 50000) {
+          proposal.duration_days = 14;
+        } else if (carPrice >= 30000) {
+          proposal.duration_days = 10;
+        } else {
+          proposal.duration_days = 7;
+        }
+        console.warn(`⚠️ Adjusted duration to ${proposal.duration_days} days based on car price`);
+      }
+      
+      console.log('✅ AI proposal parsed successfully');
+      console.log('🎯 Objective:', proposal.objective);
+      console.log('💡 Targeting Strategy:', proposal.targeting_strategy ? 'Yes' : 'No');
+      console.log('📊 Performance Estimates:', proposal.expected_performance ? 'Yes' : 'No');
+      console.log('💰 Daily Budget: €' + (proposal.daily_budget_cents / 100).toFixed(2));
+      console.log('📅 Duration: ' + proposal.duration_days + ' days');
+      
     } catch (e) {
-      return res.status(500).json({ error: 'AI returned invalid JSON' });
+      console.error('❌ JSON parse error:', e.message);
+      console.error('Raw content sample:', completion.choices[0]?.message?.content?.substring(0, 200));
+      return res.status(500).json({ error: 'AI returned invalid JSON format' });
     }
 
     res.json({ proposal });
   } catch (err) {
-    console.error('recommendAdPlan error:', err.message);
-    res.status(500).json({ error: 'Failed to generate recommendation' });
+    console.error('❌ recommendAdPlan error:', err.message);
+    console.error('Stack:', err.stack);
+    res.status(500).json({ error: 'Failed to generate recommendation: ' + err.message });
   }
 };
 
