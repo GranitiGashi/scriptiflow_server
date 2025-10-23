@@ -360,45 +360,46 @@ Rules:
         proposal.objective = 'OUTCOME_TRAFFIC';
       }
       
-      // Smart budget validation based on car price
+      // FORCE dynamic budget calculation based on car price (AI is not being smart enough)
       const carPrice = car.market?.price_eur || 0;
-      if (carPrice > 0 && proposal.daily_budget_cents) {
-        const dailyBudgetEur = proposal.daily_budget_cents / 100;
-        
-        // Check if budget is reasonable for the car price
-        let expectedMinBudget = 8;
-        let expectedMaxBudget = 15;
-        
-        if (carPrice >= 50000) {
-          expectedMinBudget = 40;
-          expectedMaxBudget = 70;
-        } else if (carPrice >= 30000) {
-          expectedMinBudget = 25;
-          expectedMaxBudget = 40;
-        } else if (carPrice >= 15000) {
-          expectedMinBudget = 15;
-          expectedMaxBudget = 25;
-        }
-        
-        // If budget is outside reasonable range, adjust it
-        if (dailyBudgetEur < expectedMinBudget || dailyBudgetEur > expectedMaxBudget * 1.5) {
-          const adjustedBudget = Math.floor((expectedMinBudget + expectedMaxBudget) / 2);
-          console.warn(`⚠️ AI budget €${dailyBudgetEur}/day seems off for €${carPrice} car. Adjusting to €${adjustedBudget}/day`);
-          proposal.daily_budget_cents = adjustedBudget * 100;
-        }
-      }
       
-      // Duration validation
-      if (!proposal.duration_days || proposal.duration_days < 7 || proposal.duration_days > 21) {
-        const carPrice = car.market?.price_eur || 0;
-        if (carPrice >= 50000) {
-          proposal.duration_days = 14;
+      if (carPrice > 0) {
+        // Calculate dynamic budget based ONLY on car price
+        let dailyBudgetEur = 10; // fallback
+        let durationDays = 7;
+        
+        if (carPrice >= 80000) {
+          dailyBudgetEur = Math.floor(60 + Math.random() * 15); // €60-75/day
+          durationDays = 14;
+        } else if (carPrice >= 50000) {
+          dailyBudgetEur = Math.floor(45 + Math.random() * 15); // €45-60/day
+          durationDays = 14;
         } else if (carPrice >= 30000) {
-          proposal.duration_days = 10;
+          dailyBudgetEur = Math.floor(28 + Math.random() * 12); // €28-40/day
+          durationDays = 10;
+        } else if (carPrice >= 20000) {
+          dailyBudgetEur = Math.floor(18 + Math.random() * 7); // €18-25/day
+          durationDays = 10;
+        } else if (carPrice >= 15000) {
+          dailyBudgetEur = Math.floor(15 + Math.random() * 5); // €15-20/day
+          durationDays = 7;
+        } else if (carPrice >= 10000) {
+          dailyBudgetEur = Math.floor(10 + Math.random() * 5); // €10-15/day
+          durationDays = 7;
         } else {
-          proposal.duration_days = 7;
+          dailyBudgetEur = Math.floor(8 + Math.random() * 4); // €8-12/day
+          durationDays = 7;
         }
-        console.warn(`⚠️ Adjusted duration to ${proposal.duration_days} days based on car price`);
+        
+        // FORCE these values (override whatever AI said)
+        const oldBudget = proposal.daily_budget_cents / 100;
+        proposal.daily_budget_cents = dailyBudgetEur * 100;
+        proposal.duration_days = durationDays;
+        
+        console.log(`🔧 FORCED dynamic calculation for €${carPrice.toLocaleString()} car:`);
+        console.log(`   Old AI budget: €${oldBudget}/day → New: €${dailyBudgetEur}/day`);
+        console.log(`   Duration: ${durationDays} days`);
+        console.log(`   Total budget: €${(dailyBudgetEur * durationDays).toFixed(2)}`);
       }
       
       console.log('✅ AI proposal parsed successfully');
