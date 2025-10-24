@@ -245,13 +245,26 @@ exports.listEvents = async (req, res) => {
       // Continue with local events retrieval
     }
 
-    // Return events from local database
-    const { data: rows } = await supabase
+    // Get query parameters for date filtering
+    const { start_time, end_time } = req.query;
+    
+    // Build the query
+    let query = supabase
       .from('calendar_events')
       .select('id, google_event_id, outlook_event_id, title, description, location, start_time, end_time, car_mobile_de_id, contact_id')
       .eq('user_id', user.id)
-      .is('deleted_at', null)
-      .order('start_time', { ascending: true });
+      .is('deleted_at', null);
+    
+    // Apply date filtering if provided
+    if (start_time) {
+      query = query.gte('start_time', start_time);
+    }
+    if (end_time) {
+      query = query.lte('end_time', end_time);
+    }
+    
+    // Execute query and order results
+    const { data: rows } = await query.order('start_time', { ascending: true });
 
     return res.json(rows || []);
   } catch (e) {
