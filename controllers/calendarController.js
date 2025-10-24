@@ -251,7 +251,19 @@ exports.listEvents = async (req, res) => {
     // Build the query
     let query = supabase
       .from('calendar_events')
-      .select('id, google_event_id, outlook_event_id, title, description, location, start_time, end_time, car_mobile_de_id, contact_id')
+      .select(`
+        id, 
+        google_event_id, 
+        outlook_event_id, 
+        title, 
+        description, 
+        location, 
+        start_time, 
+        end_time, 
+        car_mobile_de_id, 
+        contact_id,
+        car_data:car_mobile_de_id
+      `)
       .eq('user_id', user.id)
       .is('deleted_at', null);
     
@@ -266,7 +278,51 @@ exports.listEvents = async (req, res) => {
     // Execute query and order results
     const { data: rows } = await query.order('start_time', { ascending: true });
 
-    return res.json(rows || []);
+    // Fetch car data for events that have car_mobile_de_id
+    const eventsWithCarData = await Promise.all((rows || []).map(async (event) => {
+      if (event.car_mobile_de_id) {
+        try {
+          // Fetch car data from mobile.de API
+          const carResponse = await fetch(`https://services.mobile.de/search-api/search?customerId=${process.env.MOBILE_DE_CUSTOMER_ID}&externalId=${event.car_mobile_de_id}`, {
+            headers: {
+              'Authorization': `Bearer ${process.env.MOBILE_DE_API_KEY}`,
+              'Accept': 'application/json'
+            }
+          });
+          
+          if (carResponse.ok) {
+            const carData = await carResponse.json();
+            const car = carData.ads?.[0];
+            if (car) {
+              const make = car.vehicle?.make?.['@key'] || car.vehicle?.make || car?.make || '';
+              const model = car.vehicle?.model?.['@key'] || car.vehicle?.model || car?.model || '';
+              const modelDescription = car.vehicle?.['model-description']?.['@value'] || car?.modelDescription || '';
+              const title = [make, model, modelDescription].filter(Boolean).join(' ').trim() || 'Car';
+              
+              let image = null;
+              if (Array.isArray(car.images) && car.images.length > 0) {
+                image = car.images[0].url || car.images[0]?.src || car.images[0] || null;
+              }
+              
+              return {
+                ...event,
+                car: {
+                  id: event.car_mobile_de_id,
+                  title,
+                  image,
+                  url: `https://suchen.mobile.de/fahrzeuge/details.html?id=${event.car_mobile_de_id}`
+                }
+              };
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching car data:', error);
+        }
+      }
+      return event;
+    }));
+
+    return res.json(eventsWithCarData || []);
   } catch (e) {
     console.error('Calendar listEvents error:', e);
     return res.status(500).json({ error: e.message || 'Failed to list events' });
