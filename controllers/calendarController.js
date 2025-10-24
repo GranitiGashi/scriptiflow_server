@@ -3,6 +3,7 @@ const supabase = require('../config/supabaseClient');
 const supabaseAdmin = require('../config/supabaseAdmin');
 const { getUserFromRequest } = require('../utils/authUser');
 const { encrypt, decrypt } = require('../utils/crypto');
+const axios = require('axios');
 
 async function getGmailTokens(userId) {
   const { data } = await supabase
@@ -51,6 +52,83 @@ async function getAuthedCalendar(userId) {
     }
   });
   return google.calendar({ version: 'v3', auth: oauth2Client });
+}
+
+// Outlook Calendar functions
+async function getOutlookTokens(userId) {
+  const { data } = await supabase
+    .from('email_credentials')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('provider', 'outlook')
+    .maybeSingle();
+  if (!data) return null;
+  const access_token = data.access_token_encrypted ? decrypt(data.access_token_encrypted, data.access_token_iv) : null;
+  const refresh_token = data.refresh_token_encrypted ? decrypt(data.refresh_token_encrypted, data.refresh_token_iv) : null;
+  return { access_token, refresh_token, expires_at: data.expires_at, row: data };
+}
+
+async function getAuthedOutlookCalendar(userId) {
+  const tokens = await getOutlookTokens(userId);
+  if (!tokens) {
+    throw new Error('Outlook not connected. Please connect your Outlook account first to use calendar features.');
+  }
+  
+  // Check if Outlook OAuth credentials are configured
+  if (!process.env.OUTLOOK_CLIENT_ID || !process.env.OUTLOOK_CLIENT_SECRET) {
+    throw new Error('Outlook OAuth credentials not configured. Please set OUTLOOK_CLIENT_ID and OUTLOOK_CLIENT_SECRET environment variables.');
+  }
+  
+  // Refresh token if needed
+  if (tokens.expires_at && new Date(tokens.expires_at) <= new Date()) {
+    try {
+      const refreshResponse = await axios.post('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+        client_id: process.env.OUTLOOK_CLIENT_ID,
+        client_secret: process.env.OUTLOOK_CLIENT_SECRET,
+        refresh_token: tokens.refresh_token,
+        grant_type: 'refresh_token',
+        scope: 'https://graph.microsoft.com/calendars.readwrite'
+      });
+      
+      const enc = encrypt(refreshResponse.data.access_token);
+      const refreshEnc = encrypt(refreshResponse.data.refresh_token);
+      const expiresAt = new Date(Date.now() + (refreshResponse.data.expires_in * 1000)).toISOString();
+      
+      await supabaseAdmin.from('email_credentials').update({
+        access_token_encrypted: enc.encryptedData,
+        access_token_iv: enc.iv,
+        refresh_token_encrypted: refreshEnc.encryptedData,
+        refresh_token_iv: refreshEnc.iv,
+        expires_at: expiresAt,
+        updated_at: new Date().toISOString()
+      }).eq('id', tokens.row.id);
+      
+      tokens.access_token = refreshResponse.data.access_token;
+    } catch (error) {
+      console.error('Outlook token refresh failed:', error);
+      throw new Error('Failed to refresh Outlook tokens');
+    }
+  }
+  
+  return {
+    accessToken: tokens.access_token,
+    baseURL: 'https://graph.microsoft.com/v1.0/me/calendars'
+  };
+}
+
+function getSyncMessage(googleEventId, outlookEventId) {
+  const google = !!googleEventId;
+  const outlook = !!outlookEventId;
+  
+  if (google && outlook) {
+    return 'Event synced to Google Calendar, Outlook Calendar, and local database';
+  } else if (google) {
+    return 'Event synced to Google Calendar and local database';
+  } else if (outlook) {
+    return 'Event synced to Outlook Calendar and local database';
+  } else {
+    return 'Event created in local database only';
+  }
 }
 
 exports.listEvents = async (req, res) => {
@@ -108,10 +186,65 @@ exports.listEvents = async (req, res) => {
       // Continue with local events retrieval
     }
 
+    // Try to sync with Outlook Calendar if credentials are available
+    try {
+      if (process.env.OUTLOOK_CLIENT_ID && process.env.OUTLOOK_CLIENT_SECRET) {
+        const outlook = await getAuthedOutlookCalendar(user.id);
+        const now = new Date();
+        const past = new Date(now.getTime() - 30 * 24 * 3600 * 1000).toISOString();
+        const future = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
+        
+        const outlookResponse = await axios.get(
+          `https://graph.microsoft.com/v1.0/me/events?$filter=start/dateTime ge '${past}' and end/dateTime le '${future}'&$orderby=start/dateTime&$top=2500`,
+          {
+            headers: {
+              'Authorization': `Bearer ${outlook.accessToken}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+
+        const events = Array.isArray(outlookResponse.data.value) ? outlookResponse.data.value : [];
+        for (const ev of events) {
+          const start = ev.start?.dateTime || null;
+          const end = ev.end?.dateTime || null;
+          if (!start || !end) continue;
+          
+          // Try to link to a contact by attendee email
+          let contactId = null;
+          let emailCandidate = null;
+          let nameCandidate = null;
+          if (Array.isArray(ev.attendees) && ev.attendees.length) {
+            const att = ev.attendees.find((a) => a.emailAddress?.address) || ev.attendees[0];
+            emailCandidate = att?.emailAddress?.address || null;
+            nameCandidate = att?.emailAddress?.name || null;
+          }
+          if (emailCandidate) {
+            try { contactId = await findOrCreateContact(user.id, { name: nameCandidate, email: emailCandidate }); } catch (_) {}
+          }
+          
+          await supabaseAdmin.from('calendar_events').upsert({
+            user_id: user.id,
+            outlook_event_id: ev.id,
+            calendar_id: 'primary',
+            title: ev.subject || 'Event',
+            description: ev.body?.content || null,
+            location: ev.location?.displayName || null,
+            start_time: new Date(start).toISOString(),
+            end_time: new Date(end).toISOString(),
+            contact_id: contactId || null,
+          }, { onConflict: 'user_id,outlook_event_id' });
+        }
+      }
+    } catch (outlookError) {
+      console.log('Outlook Calendar sync failed, returning local events only:', outlookError.message);
+      // Continue with local events retrieval
+    }
+
     // Return events from local database
     const { data: rows } = await supabase
       .from('calendar_events')
-      .select('id, google_event_id, title, description, location, start_time, end_time, car_mobile_de_id, contact_id')
+      .select('id, google_event_id, outlook_event_id, title, description, location, start_time, end_time, car_mobile_de_id, contact_id')
       .eq('user_id', user.id)
       .is('deleted_at', null)
       .order('start_time', { ascending: true });
@@ -172,6 +305,7 @@ exports.createEvent = async (req, res) => {
     }
     
     let google_event_id = null;
+    let outlook_event_id = null;
     let finalContactId = contact_id || null;
     
     // Try to create Google Calendar event if credentials are available
@@ -191,6 +325,37 @@ exports.createEvent = async (req, res) => {
       // Continue with local event creation even if Google Calendar fails
     }
     
+    // Try to create Outlook Calendar event if credentials are available
+    try {
+      if (process.env.OUTLOOK_CLIENT_ID && process.env.OUTLOOK_CLIENT_SECRET) {
+        const outlook = await getAuthedOutlookCalendar(user.id);
+        const eventData = {
+          subject: title,
+          body: { contentType: 'HTML', content: description || '' },
+          location: location ? { displayName: location } : null,
+          start: { dateTime: start_time, timeZone: 'UTC' },
+          end: { dateTime: end_time, timeZone: 'UTC' },
+          attendees: customer_email ? [{ emailAddress: { address: customer_email, name: customer_name || undefined }, type: 'required' }] : []
+        };
+        
+        const outlookResponse = await axios.post(
+          'https://graph.microsoft.com/v1.0/me/events',
+          eventData,
+          {
+            headers: {
+              'Authorization': `Bearer ${outlook.accessToken}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+        
+        outlook_event_id = outlookResponse.data.id;
+      }
+    } catch (outlookError) {
+      console.log('Outlook Calendar not available, creating local event only:', outlookError.message);
+      // Continue with local event creation even if Outlook Calendar fails
+    }
+    
     // Create or find contact
     if (!finalContactId && (customer_email || customer_name)) {
       try {
@@ -203,7 +368,8 @@ exports.createEvent = async (req, res) => {
     // Store event in local database
     const { data: created, error } = await supabaseAdmin.from('calendar_events').insert({ 
       user_id: user.id, 
-      google_event_id: google_event_id || `local_${Date.now()}`, 
+      google_event_id: google_event_id || null, 
+      outlook_event_id: outlook_event_id || null,
       calendar_id: 'primary', 
       title, 
       description, 
@@ -218,7 +384,8 @@ exports.createEvent = async (req, res) => {
     return res.json({ 
       id: created.id, 
       google_event_id: google_event_id,
-      message: google_event_id ? 'Event created in Google Calendar and local database' : 'Event created in local database only'
+      outlook_event_id: outlook_event_id,
+      message: getSyncMessage(google_event_id, outlook_event_id)
     });
   } catch (e) {
     console.error('Calendar createEvent error:', e);
