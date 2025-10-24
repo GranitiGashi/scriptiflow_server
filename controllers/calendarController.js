@@ -278,59 +278,8 @@ exports.listEvents = async (req, res) => {
     // Execute query and order results
     const { data: rows } = await query.order('start_time', { ascending: true });
 
-    // Fetch car data for events that have car_mobile_de_id
-    const eventsWithCarData = await Promise.all((rows || []).map(async (event) => {
-      if (event.car_mobile_de_id) {
-        try {
-          // Use the same car fetching logic as the get-user-cars endpoint
-          const carResponse = await fetch(`https://services.mobile.de/search-api/search?customerId=${process.env.MOBILE_DE_CUSTOMER_ID}&externalId=${event.car_mobile_de_id}`, {
-            headers: {
-              'Authorization': `Bearer ${process.env.MOBILE_DE_API_KEY}`,
-              'Accept': 'application/json'
-            }
-          });
-          
-          if (carResponse.ok) {
-            const data = await carResponse.json();
-            const rawCars = Array.isArray(data?.['search-result']?.ads?.ad)
-              ? data['search-result'].ads.ad
-              : Array.isArray(data?.ads)
-              ? data.ads
-              : Array.isArray(data)
-              ? data
-              : [];
-            
-            if (rawCars.length > 0) {
-              const c = rawCars[0];
-              const make = c?.vehicle?.make?.['@key'] || c?.vehicle?.make || c?.make || '';
-              const model = c?.vehicle?.model?.['@key'] || c?.vehicle?.model || c?.model || '';
-              const modelDescription = c?.vehicle?.['model-description']?.['@value'] || c?.modelDescription || '';
-              const title = [make, model, modelDescription].filter(Boolean).join(' ').trim() || 'Car';
-              
-              let image = null;
-              if (Array.isArray(c?.images) && c.images.length > 0) {
-                image = c.images[0].url || c.images[0]?.src || c.images[0] || null;
-              }
-              
-              console.log('Car data found for event:', event.title, { title, image });
-              
-              return {
-                ...event,
-                car: {
-                  id: event.car_mobile_de_id,
-                  title,
-                  image,
-                  url: `https://suchen.mobile.de/fahrzeuge/details.html?id=${event.car_mobile_de_id}`
-                }
-              };
-            }
-          }
-        } catch (error) {
-          console.error('Error fetching car data for event:', event.title, error);
-        }
-      }
-      return event;
-    }));
+    // For now, return events without car data - let frontend handle car fetching
+    const eventsWithCarData = rows || [];
 
     return res.json(eventsWithCarData || []);
   } catch (e) {
