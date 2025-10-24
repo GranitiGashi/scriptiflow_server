@@ -688,6 +688,8 @@ exports.getMobileDeFilters = async (req, res) => {
     }
     
     console.log('Mobile.de filters result:', result);
+    console.log('Total cars processed:', rawCars.length);
+    console.log('Unique makes found:', Array.from(makes).sort());
     return res.json(result);
   } catch (err) {
     console.error('getMobileDeFilters error:', err);
