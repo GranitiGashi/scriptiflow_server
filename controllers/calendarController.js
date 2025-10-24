@@ -58,47 +58,57 @@ exports.listEvents = async (req, res) => {
     const auth = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
     if (auth.error) return res.status(auth.error.status || 401).json({ error: auth.error.message });
     const user = auth.user;
-    const cal = await getAuthedCalendar(user.id);
-    const now = new Date();
-    const past = new Date(now.getTime() - 30 * 24 * 3600 * 1000).toISOString();
-    const future = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
-    const { data } = await cal.events.list({ calendarId: 'primary', timeMin: past, timeMax: future, singleEvents: true, orderBy: 'startTime', maxResults: 2500 });
+    
+    // Try to sync with Google Calendar if credentials are available
+    try {
+      if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+        const cal = await getAuthedCalendar(user.id);
+        const now = new Date();
+        const past = new Date(now.getTime() - 30 * 24 * 3600 * 1000).toISOString();
+        const future = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
+        const { data } = await cal.events.list({ calendarId: 'primary', timeMin: past, timeMax: future, singleEvents: true, orderBy: 'startTime', maxResults: 2500 });
 
-    // upsert into local DB for quick retrieval
-    const items = Array.isArray(data.items) ? data.items : [];
-    for (const ev of items) {
-      const start = ev.start?.dateTime || (ev.start?.date ? `${ev.start.date}T00:00:00Z` : null);
-      const end = ev.end?.dateTime || (ev.end?.date ? `${ev.end.date}T00:00:00Z` : null);
-      if (!start || !end) continue;
-      // Try to link to a contact by attendee/description email
-      let contactId = null;
-      let emailCandidate = null;
-      let nameCandidate = null;
-      if (Array.isArray(ev.attendees) && ev.attendees.length) {
-        const att = ev.attendees.find((a) => a.email && a.responseStatus !== 'declined') || ev.attendees[0];
-        emailCandidate = att?.email || null;
-        nameCandidate = att?.displayName || null;
+        // upsert into local DB for quick retrieval
+        const items = Array.isArray(data.items) ? data.items : [];
+        for (const ev of items) {
+          const start = ev.start?.dateTime || (ev.start?.date ? `${ev.start.date}T00:00:00Z` : null);
+          const end = ev.end?.dateTime || (ev.end?.date ? `${ev.end.date}T00:00:00Z` : null);
+          if (!start || !end) continue;
+          // Try to link to a contact by attendee/description email
+          let contactId = null;
+          let emailCandidate = null;
+          let nameCandidate = null;
+          if (Array.isArray(ev.attendees) && ev.attendees.length) {
+            const att = ev.attendees.find((a) => a.email && a.responseStatus !== 'declined') || ev.attendees[0];
+            emailCandidate = att?.email || null;
+            nameCandidate = att?.displayName || null;
+          }
+          if (!emailCandidate && typeof ev.description === 'string') {
+            const m = ev.description.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+            if (m) emailCandidate = m[0];
+          }
+          if (emailCandidate) {
+            try { contactId = await findOrCreateContact(user.id, { name: nameCandidate, email: emailCandidate }); } catch (_) {}
+          }
+          await supabaseAdmin.from('calendar_events').upsert({
+            user_id: user.id,
+            google_event_id: ev.id,
+            calendar_id: ev.organizer?.email || 'primary',
+            title: ev.summary || 'Event',
+            description: ev.description || null,
+            location: ev.location || null,
+            start_time: new Date(start).toISOString(),
+            end_time: new Date(end).toISOString(),
+            contact_id: contactId || null,
+          }, { onConflict: 'user_id,google_event_id' });
+        }
       }
-      if (!emailCandidate && typeof ev.description === 'string') {
-        const m = ev.description.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-        if (m) emailCandidate = m[0];
-      }
-      if (emailCandidate) {
-        try { contactId = await findOrCreateContact(user.id, { name: nameCandidate, email: emailCandidate }); } catch (_) {}
-      }
-      await supabaseAdmin.from('calendar_events').upsert({
-        user_id: user.id,
-        google_event_id: ev.id,
-        calendar_id: ev.organizer?.email || 'primary',
-        title: ev.summary || 'Event',
-        description: ev.description || null,
-        location: ev.location || null,
-        start_time: new Date(start).toISOString(),
-        end_time: new Date(end).toISOString(),
-        contact_id: contactId || null,
-      }, { onConflict: 'user_id,google_event_id' });
+    } catch (googleError) {
+      console.log('Google Calendar sync failed, returning local events only:', googleError.message);
+      // Continue with local events retrieval
     }
 
+    // Return events from local database
     const { data: rows } = await supabase
       .from('calendar_events')
       .select('id, google_event_id, title, description, location, start_time, end_time, car_mobile_de_id, contact_id')
@@ -108,6 +118,7 @@ exports.listEvents = async (req, res) => {
 
     return res.json(rows || []);
   } catch (e) {
+    console.error('Calendar listEvents error:', e);
     return res.status(500).json({ error: e.message || 'Failed to list events' });
   }
 };
@@ -160,23 +171,39 @@ exports.createEvent = async (req, res) => {
       return res.status(400).json({ error: 'Invalid date format for start_time or end_time' });
     }
     
-    const cal = await getAuthedCalendar(user.id);
-    const requestBody = { summary: title, description, location, start: { dateTime: start_time }, end: { dateTime: end_time } };
-    if (customer_email) {
-      requestBody.attendees = [{ email: customer_email, displayName: customer_name || undefined }];
-    }
-    
-    const g = await cal.events.insert({ calendarId: 'primary', requestBody });
-    const google_event_id = g.data.id;
-    
+    let google_event_id = null;
     let finalContactId = contact_id || null;
-    if (!finalContactId && (customer_email || customer_name)) {
-      finalContactId = await findOrCreateContact(user.id, { name: customer_name || null, email: customer_email || null });
+    
+    // Try to create Google Calendar event if credentials are available
+    try {
+      if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+        const cal = await getAuthedCalendar(user.id);
+        const requestBody = { summary: title, description, location, start: { dateTime: start_time }, end: { dateTime: end_time } };
+        if (customer_email) {
+          requestBody.attendees = [{ email: customer_email, displayName: customer_name || undefined }];
+        }
+        
+        const g = await cal.events.insert({ calendarId: 'primary', requestBody });
+        google_event_id = g.data.id;
+      }
+    } catch (googleError) {
+      console.log('Google Calendar not available, creating local event only:', googleError.message);
+      // Continue with local event creation even if Google Calendar fails
     }
     
+    // Create or find contact
+    if (!finalContactId && (customer_email || customer_name)) {
+      try {
+        finalContactId = await findOrCreateContact(user.id, { name: customer_name || null, email: customer_email || null });
+      } catch (contactError) {
+        console.log('Contact creation failed:', contactError.message);
+      }
+    }
+    
+    // Store event in local database
     const { data: created, error } = await supabaseAdmin.from('calendar_events').insert({ 
       user_id: user.id, 
-      google_event_id, 
+      google_event_id: google_event_id || `local_${Date.now()}`, 
       calendar_id: 'primary', 
       title, 
       description, 
@@ -188,7 +215,11 @@ exports.createEvent = async (req, res) => {
     }).select('id').single();
     
     if (error) return res.status(500).json({ error: `Database error: ${error.message}` });
-    return res.json({ id: created.id, google_event_id });
+    return res.json({ 
+      id: created.id, 
+      google_event_id: google_event_id,
+      message: google_event_id ? 'Event created in Google Calendar and local database' : 'Event created in local database only'
+    });
   } catch (e) {
     console.error('Calendar createEvent error:', e);
     return res.status(500).json({ error: e.message || 'Failed to create event' });
