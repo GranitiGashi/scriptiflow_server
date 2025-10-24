@@ -28,7 +28,15 @@ function getOAuth2Client() {
 
 async function getAuthedCalendar(userId) {
   const tokens = await getGmailTokens(userId);
-  if (!tokens) throw new Error('Gmail not connected');
+  if (!tokens) {
+    throw new Error('Gmail not connected. Please connect your Gmail account first to use calendar features.');
+  }
+  
+  // Check if Google OAuth credentials are configured
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+    throw new Error('Google OAuth credentials not configured. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables.');
+  }
+  
   const oauth2Client = getOAuth2Client();
   oauth2Client.setCredentials({ access_token: tokens.access_token, refresh_token: tokens.refresh_token });
   // handle refresh
@@ -138,22 +146,51 @@ exports.createEvent = async (req, res) => {
     if (auth.error) return res.status(auth.error.status || 401).json({ error: auth.error.message });
     const user = auth.user;
     const { title, description, location, start_time, end_time, car_mobile_de_id, contact_id, customer_name, customer_email } = req.body || {};
-    if (!title || !start_time || !end_time) return res.status(400).json({ error: 'title, start_time, end_time required' });
+    
+    // Validate required fields
+    if (!title || !start_time || !end_time) {
+      return res.status(400).json({ error: 'Title, start_time, and end_time are required' });
+    }
+    
+    // Validate date format
+    try {
+      new Date(start_time);
+      new Date(end_time);
+    } catch (dateError) {
+      return res.status(400).json({ error: 'Invalid date format for start_time or end_time' });
+    }
+    
     const cal = await getAuthedCalendar(user.id);
     const requestBody = { summary: title, description, location, start: { dateTime: start_time }, end: { dateTime: end_time } };
     if (customer_email) {
       requestBody.attendees = [{ email: customer_email, displayName: customer_name || undefined }];
     }
+    
     const g = await cal.events.insert({ calendarId: 'primary', requestBody });
     const google_event_id = g.data.id;
+    
     let finalContactId = contact_id || null;
     if (!finalContactId && (customer_email || customer_name)) {
       finalContactId = await findOrCreateContact(user.id, { name: customer_name || null, email: customer_email || null });
     }
-    const { data: created, error } = await supabaseAdmin.from('calendar_events').insert({ user_id: user.id, google_event_id, calendar_id: 'primary', title, description, location, start_time, end_time, car_mobile_de_id: car_mobile_de_id || null, contact_id: finalContactId || null }).select('id').single();
-    if (error) return res.status(500).json({ error: error.message });
+    
+    const { data: created, error } = await supabaseAdmin.from('calendar_events').insert({ 
+      user_id: user.id, 
+      google_event_id, 
+      calendar_id: 'primary', 
+      title, 
+      description, 
+      location, 
+      start_time, 
+      end_time, 
+      car_mobile_de_id: car_mobile_de_id || null, 
+      contact_id: finalContactId || null 
+    }).select('id').single();
+    
+    if (error) return res.status(500).json({ error: `Database error: ${error.message}` });
     return res.json({ id: created.id, google_event_id });
   } catch (e) {
+    console.error('Calendar createEvent error:', e);
     return res.status(500).json({ error: e.message || 'Failed to create event' });
   }
 };
