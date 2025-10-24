@@ -282,7 +282,7 @@ exports.listEvents = async (req, res) => {
     const eventsWithCarData = await Promise.all((rows || []).map(async (event) => {
       if (event.car_mobile_de_id) {
         try {
-          // Fetch car data from mobile.de API
+          // Use the same car fetching logic as the get-user-cars endpoint
           const carResponse = await fetch(`https://services.mobile.de/search-api/search?customerId=${process.env.MOBILE_DE_CUSTOMER_ID}&externalId=${event.car_mobile_de_id}`, {
             headers: {
               'Authorization': `Bearer ${process.env.MOBILE_DE_API_KEY}`,
@@ -291,18 +291,28 @@ exports.listEvents = async (req, res) => {
           });
           
           if (carResponse.ok) {
-            const carData = await carResponse.json();
-            const car = carData.ads?.[0];
-            if (car) {
-              const make = car.vehicle?.make?.['@key'] || car.vehicle?.make || car?.make || '';
-              const model = car.vehicle?.model?.['@key'] || car.vehicle?.model || car?.model || '';
-              const modelDescription = car.vehicle?.['model-description']?.['@value'] || car?.modelDescription || '';
+            const data = await carResponse.json();
+            const rawCars = Array.isArray(data?.['search-result']?.ads?.ad)
+              ? data['search-result'].ads.ad
+              : Array.isArray(data?.ads)
+              ? data.ads
+              : Array.isArray(data)
+              ? data
+              : [];
+            
+            if (rawCars.length > 0) {
+              const c = rawCars[0];
+              const make = c?.vehicle?.make?.['@key'] || c?.vehicle?.make || c?.make || '';
+              const model = c?.vehicle?.model?.['@key'] || c?.vehicle?.model || c?.model || '';
+              const modelDescription = c?.vehicle?.['model-description']?.['@value'] || c?.modelDescription || '';
               const title = [make, model, modelDescription].filter(Boolean).join(' ').trim() || 'Car';
               
               let image = null;
-              if (Array.isArray(car.images) && car.images.length > 0) {
-                image = car.images[0].url || car.images[0]?.src || car.images[0] || null;
+              if (Array.isArray(c?.images) && c.images.length > 0) {
+                image = c.images[0].url || c.images[0]?.src || c.images[0] || null;
               }
+              
+              console.log('Car data found for event:', event.title, { title, image });
               
               return {
                 ...event,
@@ -316,7 +326,7 @@ exports.listEvents = async (req, res) => {
             }
           }
         } catch (error) {
-          console.error('Error fetching car data:', error);
+          console.error('Error fetching car data for event:', event.title, error);
         }
       }
       return event;
