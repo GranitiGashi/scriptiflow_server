@@ -138,295 +138,212 @@ exports.listEvents = async (req, res) => {
       return res.status(auth.error.status || 401).json({ error: auth.error.message });
 
     const user = auth.user;
-    const cal = await getAuthedCalendar(user.id);
 
     const now = new Date();
     const past = new Date(now.getTime() - 30 * 24 * 3600 * 1000).toISOString();
     const future = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
 
-    // Fetch from Google Calendar
-    const { data } = await cal.events.list({
-      calendarId: 'primary',
-      timeMin: past,
-      timeMax: future,
-      singleEvents: true,
-      orderBy: 'startTime',
-      maxResults: 2500,
-    });
+    // -------------------- 🗓️ SYNC WITH CALENDARS --------------------
+    const syncPromises = [];
 
-    // Upsert into local DB for faster retrieval
-    const items = Array.isArray(data.items) ? data.items : [];
-
-    for (const ev of items) {
-      const start =
-        ev.start?.dateTime || (ev.start?.date ? `${ev.start.date}T00:00:00Z` : null);
-      const end =
-        ev.end?.dateTime || (ev.end?.date ? `${ev.end.date}T00:00:00Z` : null);
-      if (!start || !end) continue;
-
-      // Try linking to a contact by attendee or email in description
-      let contactId = null;
-      let emailCandidate = null;
-      let nameCandidate = null;
-
-      if (Array.isArray(ev.attendees) && ev.attendees.length) {
-        const att =
-          ev.attendees.find((a) => a.email && a.responseStatus !== 'declined') ||
-          ev.attendees[0];
-        emailCandidate = att?.email || null;
-        nameCandidate = att?.displayName || null;
-      }
-
-      if (!emailCandidate && typeof ev.description === 'string') {
-        const m = ev.description.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-        if (m) emailCandidate = m[0];
-      }
-
-      if (emailCandidate) {
+    // ✅ Google Calendar Sync
+    syncPromises.push(
+      (async () => {
         try {
-          contactId = await findOrCreateContact(user.id, {
-            name: nameCandidate,
-            email: emailCandidate,
+          const cal = await getAuthedCalendar(user.id);
+          const { data } = await cal.events.list({
+            calendarId: 'primary',
+            timeMin: past,
+            timeMax: future,
+            singleEvents: true,
+            orderBy: 'startTime',
+            maxResults: 2500,
           });
-        } catch (_) {}
-      }
 
-      await supabaseAdmin.from('calendar_events').upsert(
-        {
-          user_id: user.id,
-          google_event_id: ev.id,
-          calendar_id: ev.organizer?.email || 'primary',
-          title: ev.summary || 'Event',
-          description: ev.description || null,
-          location: ev.location || null,
-          start_time: new Date(start).toISOString(),
-          end_time: new Date(end).toISOString(),
-          contact_id: contactId || null,
-        },
-        { onConflict: 'user_id,google_event_id' }
-      );
-    }
+          const items = Array.isArray(data.items) ? data.items : [];
+          for (const ev of items) {
+            const start = ev.start?.dateTime || (ev.start?.date ? `${ev.start.date}T00:00:00Z` : null);
+            const end = ev.end?.dateTime || (ev.end?.date ? `${ev.end.date}T00:00:00Z` : null);
+            if (!start || !end) continue;
 
-    // 🧠 Apply filters if start_time and end_time are provided in query
+            // Try linking to contact
+            let contactId = null;
+            let email = ev.attendees?.[0]?.email || null;
+            let name = ev.attendees?.[0]?.displayName || null;
+
+            if (!email && typeof ev.description === 'string') {
+              const m = ev.description.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+              if (m) email = m[0];
+            }
+
+            if (email) {
+              try {
+                contactId = await findOrCreateContact(user.id, { name, email });
+              } catch (_) {}
+            }
+
+            await supabaseAdmin.from('calendar_events').upsert(
+              {
+                user_id: user.id,
+                google_event_id: ev.id,
+                calendar_id: ev.organizer?.email || 'primary',
+                title: ev.summary || 'Event',
+                description: ev.description || null,
+                location: ev.location || null,
+                start_time: new Date(start).toISOString(),
+                end_time: new Date(end).toISOString(),
+                contact_id: contactId,
+              },
+              { onConflict: 'user_id,google_event_id' }
+            );
+          }
+        } catch (err) {
+          console.log('❌ Google Calendar sync failed:', err.message);
+        }
+      })()
+    );
+
+    // ✅ Outlook Calendar Sync
+    syncPromises.push(
+      (async () => {
+        try {
+          const outlookTokens = await getOutlookTokens(user.id);
+          if (!outlookTokens) return;
+
+          const outlook = await getAuthedOutlookCalendar(user.id);
+          const response = await axios.get(
+            `https://graph.microsoft.com/v1.0/me/events?$filter=start/dateTime ge '${past}' and end/dateTime le '${future}'&$orderby=start/dateTime&$top=2500`,
+            {
+              headers: {
+                Authorization: `Bearer ${outlook.accessToken}`,
+                'Content-Type': 'application/json',
+              },
+            }
+          );
+
+          const events = Array.isArray(response.data.value) ? response.data.value : [];
+          for (const ev of events) {
+            const start = ev.start?.dateTime;
+            const end = ev.end?.dateTime;
+            if (!start || !end) continue;
+
+            let contactId = null;
+            const attendee = ev.attendees?.[0];
+            if (attendee?.emailAddress?.address) {
+              try {
+                contactId = await findOrCreateContact(user.id, {
+                  name: attendee.emailAddress.name,
+                  email: attendee.emailAddress.address,
+                });
+              } catch (_) {}
+            }
+
+            await supabaseAdmin.from('calendar_events').upsert(
+              {
+                user_id: user.id,
+                outlook_event_id: ev.id,
+                calendar_id: 'primary',
+                title: ev.subject || 'Event',
+                description: ev.body?.content || null,
+                location: ev.location?.displayName || null,
+                start_time: new Date(start).toISOString(),
+                end_time: new Date(end).toISOString(),
+                contact_id: contactId,
+              },
+              { onConflict: 'user_id,outlook_event_id' }
+            );
+          }
+        } catch (err) {
+          console.log('❌ Outlook Calendar sync failed:', err.message);
+        }
+      })()
+    );
+
+    // Run both in parallel
+    await Promise.all(syncPromises);
+
+    // -------------------- 🔍 FETCH LOCAL EVENTS --------------------
     const { start_time: queryStart, end_time: queryEnd } = req.query;
 
-    let rowsQuery = supabase
-      .from('calendar_events')
-      .select(
-        'id, google_event_id, title, description, location, start_time, end_time, car_mobile_de_id, contact_id'
-      )
-    
-    // Try to sync with Google Calendar if Gmail is connected
-    try {
-      const tokens = await getGmailTokens(user.id);
-      if (tokens && process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
-        const cal = await getAuthedCalendar(user.id);
-        const now = new Date();
-        const past = new Date(now.getTime() - 30 * 24 * 3600 * 1000).toISOString();
-        const future = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
-        const { data } = await cal.events.list({ calendarId: 'primary', timeMin: past, timeMax: future, singleEvents: true, orderBy: 'startTime', maxResults: 2500 });
-
-        console.log('🔄 Syncing Google Calendar events...');
-        // upsert into local DB for quick retrieval
-        const items = Array.isArray(data.items) ? data.items : [];
-        for (const ev of items) {
-          const start = ev.start?.dateTime || (ev.start?.date ? `${ev.start.date}T00:00:00Z` : null);
-          const end = ev.end?.dateTime || (ev.end?.date ? `${ev.end.date}T00:00:00Z` : null);
-          if (!start || !end) continue;
-          // Try to link to a contact by attendee/description email
-          let contactId = null;
-          let emailCandidate = null;
-          let nameCandidate = null;
-          if (Array.isArray(ev.attendees) && ev.attendees.length) {
-            const att = ev.attendees.find((a) => a.email && a.responseStatus !== 'declined') || ev.attendees[0];
-            emailCandidate = att?.email || null;
-            nameCandidate = att?.displayName || null;
-          }
-          if (!emailCandidate && typeof ev.description === 'string') {
-            const m = ev.description.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-            if (m) emailCandidate = m[0];
-          }
-          if (emailCandidate) {
-            try { contactId = await findOrCreateContact(user.id, { name: nameCandidate, email: emailCandidate }); } catch (_) {}
-          }
-          await supabaseAdmin.from('calendar_events').upsert({
-            user_id: user.id,
-            google_event_id: ev.id,
-            calendar_id: ev.organizer?.email || 'primary',
-            title: ev.summary || 'Event',
-            description: ev.description || null,
-            location: ev.location || null,
-            start_time: new Date(start).toISOString(),
-            end_time: new Date(end).toISOString(),
-            contact_id: contactId || null,
-          }, { onConflict: 'user_id,google_event_id' });
-        }
-      }
-    } catch (googleError) {
-      console.log('❌ Google Calendar sync failed:', googleError.message);
-      // Continue with local events retrieval
-    }
-
-    // Try to sync with Outlook Calendar if Outlook is connected
-    try {
-      const outlookTokens = await getOutlookTokens(user.id);
-      if (outlookTokens && process.env.OUTLOOK_CLIENT_ID && process.env.OUTLOOK_CLIENT_SECRET) {
-        const outlook = await getAuthedOutlookCalendar(user.id);
-        const now = new Date();
-        const past = new Date(now.getTime() - 30 * 24 * 3600 * 1000).toISOString();
-        const future = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
-        
-        const outlookResponse = await axios.get(
-          `https://graph.microsoft.com/v1.0/me/events?$filter=start/dateTime ge '${past}' and end/dateTime le '${future}'&$orderby=start/dateTime&$top=2500`,
-          {
-            headers: {
-              'Authorization': `Bearer ${outlook.accessToken}`,
-              'Content-Type': 'application/json'
-            }
-          }
-        );
-
-        console.log('🔄 Syncing Outlook Calendar events...');
-        const events = Array.isArray(outlookResponse.data.value) ? outlookResponse.data.value : [];
-        for (const ev of events) {
-          const start = ev.start?.dateTime || null;
-          const end = ev.end?.dateTime || null;
-          if (!start || !end) continue;
-          
-          // Try to link to a contact by attendee email
-          let contactId = null;
-          let emailCandidate = null;
-          let nameCandidate = null;
-          if (Array.isArray(ev.attendees) && ev.attendees.length) {
-            const att = ev.attendees.find((a) => a.emailAddress?.address) || ev.attendees[0];
-            emailCandidate = att?.emailAddress?.address || null;
-            nameCandidate = att?.emailAddress?.name || null;
-          }
-          if (emailCandidate) {
-            try { contactId = await findOrCreateContact(user.id, { name: nameCandidate, email: emailCandidate }); } catch (_) {}
-          }
-          
-          await supabaseAdmin.from('calendar_events').upsert({
-            user_id: user.id,
-            outlook_event_id: ev.id,
-            calendar_id: 'primary',
-            title: ev.subject || 'Event',
-            description: ev.body?.content || null,
-            location: ev.location?.displayName || null,
-            start_time: new Date(start).toISOString(),
-            end_time: new Date(end).toISOString(),
-            contact_id: contactId || null,
-          }, { onConflict: 'user_id,outlook_event_id' });
-        }
-      }
-    } catch (outlookError) {
-      console.log('❌ Outlook Calendar sync failed:', outlookError.message);
-      // Continue with local events retrieval
-    }
-
-    // Get query parameters for date filtering
-    const { start_time, end_time } = req.query;
-    
-    // Build the query
     let query = supabase
       .from('calendar_events')
       .select(`
-        id, 
-        google_event_id, 
-        outlook_event_id, 
-        title, 
-        description, 
-        location, 
-        start_time, 
-        end_time, 
-        car_mobile_de_id, 
-        contact_id,
-        car_data:car_mobile_de_id
+        id,
+        google_event_id,
+        outlook_event_id,
+        title,
+        description,
+        location,
+        start_time,
+        end_time,
+        car_mobile_de_id,
+        contact_id
       `)
       .eq('user_id', user.id)
       .is('deleted_at', null);
-    
-    // Apply date filtering if provided
-    if (start_time) {
-      query = query.gte('start_time', start_time);
-    }
-    if (end_time) {
-      query = query.lte('end_time', end_time);
-    }
-    
-    // Execute query and order results
-    const { data: rows } = await query.order('start_time', { ascending: true });
 
-    // ✅ Filter by overlapping range
+    // ✅ Overlapping range logic
     if (queryStart && queryEnd) {
-      rowsQuery = rowsQuery
-        .lte('start_time', queryEnd) // event starts before or during the end of range
-        .gte('end_time', queryStart); // event ends after or during the start of range
+      query = query
+        .lte('start_time', queryEnd)
+        .gte('end_time', queryStart);
     }
 
-    const { data: rows, error } = await rowsQuery;
-
+    const { data: rows, error } = await query.order('start_time', { ascending: true });
     if (error) throw new Error(error.message);
 
-    return res.json(rows || []);
-  } catch (e) {
-    console.error('Error listing events:', e);
-    return res
-      .status(500)
-      .json({ error: e.message || 'Failed to list events' });
-    // Fetch car data for events that have car_mobile_de_id
-    const eventsWithCarData = await Promise.all((rows || []).map(async (event) => {
-      if (event.car_mobile_de_id) {
+    // -------------------- 🚗 FETCH CAR DATA --------------------
+    const eventsWithCarData = await Promise.all(
+      (rows || []).map(async (event) => {
+        if (!event.car_mobile_de_id) return event;
+
         try {
-          // Use the same car fetching logic as the get-user-cars endpoint
-          const carResponse = await fetch(`https://services.mobile.de/search-api/search?customerId=${process.env.MOBILE_DE_CUSTOMER_ID}&externalId=${event.car_mobile_de_id}`, {
-            headers: {
-              'Authorization': `Bearer ${process.env.MOBILE_DE_API_KEY}`,
-              'Accept': 'application/json'
+          const carResponse = await fetch(
+            `https://services.mobile.de/search-api/search?customerId=${process.env.MOBILE_DE_CUSTOMER_ID}&externalId=${event.car_mobile_de_id}`,
+            {
+              headers: {
+                Authorization: `Bearer ${process.env.MOBILE_DE_API_KEY}`,
+                Accept: 'application/json',
+              },
             }
-          });
-          
-          if (carResponse.ok) {
-            const data = await carResponse.json();
-            const rawCars = Array.isArray(data?.['search-result']?.ads?.ad)
-              ? data['search-result'].ads.ad
-              : Array.isArray(data?.ads)
-              ? data.ads
-              : Array.isArray(data)
-              ? data
-              : [];
-            
-            if (rawCars.length > 0) {
-              const c = rawCars[0];
-              const make = c?.vehicle?.make?.['@key'] || c?.vehicle?.make || c?.make || '';
-              const model = c?.vehicle?.model?.['@key'] || c?.vehicle?.model || c?.model || '';
-              const modelDescription = c?.vehicle?.['model-description']?.['@value'] || c?.modelDescription || '';
-              const title = [make, model, modelDescription].filter(Boolean).join(' ').trim() || 'Car';
-              
-              let image = null;
-              if (Array.isArray(c?.images) && c.images.length > 0) {
-                image = c.images[0].url || c.images[0]?.src || c.images[0] || null;
-              }
-              
-              console.log('Car data found for event:', event.title, { title, image });
-              
-              return {
-                ...event,
-                car: {
-                  id: event.car_mobile_de_id,
-                  title,
-                  image,
-                  url: `https://suchen.mobile.de/fahrzeuge/details.html?id=${event.car_mobile_de_id}`
-                }
-              };
-            }
-          }
-        } catch (error) {
-          console.error('Error fetching car data for event:', event.title, error);
+          );
+
+          if (!carResponse.ok) return event;
+
+          const data = await carResponse.json();
+          const rawCars =
+            data?.['search-result']?.ads?.ad ||
+            data?.ads ||
+            (Array.isArray(data) ? data : []);
+
+          if (!Array.isArray(rawCars) || rawCars.length === 0) return event;
+
+          const c = rawCars[0];
+          const make = c?.vehicle?.make?.['@key'] || c?.vehicle?.make || '';
+          const model = c?.vehicle?.model?.['@key'] || c?.vehicle?.model || '';
+          const modelDesc = c?.vehicle?.['model-description']?.['@value'] || '';
+          const title = [make, model, modelDesc].filter(Boolean).join(' ').trim() || 'Car';
+
+          const image =
+            Array.isArray(c?.images) && c.images.length > 0
+              ? c.images[0].url || c.images[0]?.src || null
+              : null;
+
+          return {
+            ...event,
+            car: {
+              id: event.car_mobile_de_id,
+              title,
+              image,
+              url: `https://suchen.mobile.de/fahrzeuge/details.html?id=${event.car_mobile_de_id}`,
+            },
+          };
+        } catch (err) {
+          console.error('Error fetching car data for event:', event.title, err);
+          return event;
         }
-      }
-      return event;
-    }));
+      })
+    );
 
     return res.json(eventsWithCarData || []);
   } catch (e) {
@@ -434,6 +351,7 @@ exports.listEvents = async (req, res) => {
     return res.status(500).json({ error: e.message || 'Failed to list events' });
   }
 };
+
 
 
 async function findOrCreateContact(userId, { name, email }) {
