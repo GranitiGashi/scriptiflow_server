@@ -12,14 +12,14 @@
     "auto-posting": "node workers/autoPostingWorker.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "cors": "^2.8.5",
-    "helmet": "^7.0.0",
-    "dotenv": "^16.3.1",
     "@supabase/supabase-js": "^2.38.0",
     "axios": "^1.6.0",
-    "node-cron": "^3.0.2",
-    "crypto": "^1.0.1"
+    "cors": "^2.8.5",
+    "crypto": "^1.0.1",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "helmet": "^7.0.0",
+    "node-cron": "^3.0.3"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
