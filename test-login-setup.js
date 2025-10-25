@@ -87,3 +87,7 @@ console.log('\n2. Testing Supabase Connection:');
   console.log('   4. Try logging in with a test account\n');
 })();
 
+
+
+
+
