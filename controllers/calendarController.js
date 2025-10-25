@@ -292,58 +292,61 @@ exports.listEvents = async (req, res) => {
     const { data: rows, error } = await query.order('start_time', { ascending: true });
     if (error) throw new Error(error.message);
 
-    // -------------------- 🚗 FETCH CAR DATA --------------------
-    const eventsWithCarData = await Promise.all(
-      (rows || []).map(async (event) => {
-        if (!event.car_mobile_de_id) return event;
 
-        try {
-          const carResponse = await fetch(
-            `https://services.mobile.de/search-api/search?customerId=${process.env.MOBILE_DE_CUSTOMER_ID}&externalId=${event.car_mobile_de_id}`,
-            {
-              headers: {
-                Authorization: `Bearer ${process.env.MOBILE_DE_API_KEY}`,
-                Accept: 'application/json',
-              },
-            }
-          );
+//It's possible that we don't need this code. We use the /get-user-cars endpoint to get the car data.
+//mobile.de API needs Beasic auth not Bearer auth.
+    
+    // const eventsWithCarData = await Promise.all(
+    //   (rows || []).map(async (event) => {
+    //     if (!event.car_mobile_de_id) return event;
 
-          if (!carResponse.ok) return event;
+    //     try {
+    //       const carResponse = await fetch(
+    //         `https://services.mobile.de/search-api/search?customerId=${process.env.MOBILE_DE_CUSTOMER_ID}&externalId=${event.car_mobile_de_id}`,
+    //         {
+    //           headers: {
+    //             Authorization: `Bearer ${process.env.MOBILE_DE_API_KEY}`,
+    //             Accept: 'application/json',
+    //           },
+    //         }
+    //       );
 
-          const data = await carResponse.json();
-          const rawCars =
-            data?.['search-result']?.ads?.ad ||
-            data?.ads ||
-            (Array.isArray(data) ? data : []);
+    //       if (!carResponse.ok) return event;
 
-          if (!Array.isArray(rawCars) || rawCars.length === 0) return event;
+    //       const data = await carResponse.json();
+    //       const rawCars =
+    //         data?.['search-result']?.ads?.ad ||
+    //         data?.ads ||
+    //         (Array.isArray(data) ? data : []);
 
-          const c = rawCars[0];
-          const make = c?.vehicle?.make?.['@key'] || c?.vehicle?.make || '';
-          const model = c?.vehicle?.model?.['@key'] || c?.vehicle?.model || '';
-          const modelDesc = c?.vehicle?.['model-description']?.['@value'] || '';
-          const title = [make, model, modelDesc].filter(Boolean).join(' ').trim() || 'Car';
+    //       if (!Array.isArray(rawCars) || rawCars.length === 0) return event;
 
-          const image =
-            Array.isArray(c?.images) && c.images.length > 0
-              ? c.images[0].url || c.images[0]?.src || null
-              : null;
+    //       const c = rawCars[0];
+    //       const make = c?.vehicle?.make?.['@key'] || c?.vehicle?.make || '';
+    //       const model = c?.vehicle?.model?.['@key'] || c?.vehicle?.model || '';
+    //       const modelDesc = c?.vehicle?.['model-description']?.['@value'] || '';
+    //       const title = [make, model, modelDesc].filter(Boolean).join(' ').trim() || 'Car';
 
-          return {
-            ...event,
-            car: {
-              id: event.car_mobile_de_id,
-              title,
-              image,
-              url: `https://suchen.mobile.de/fahrzeuge/details.html?id=${event.car_mobile_de_id}`,
-            },
-          };
-        } catch (err) {
-          console.error('Error fetching car data for event:', event.title, err);
-          return event;
-        }
-      })
-    );
+    //       const image =
+    //         Array.isArray(c?.images) && c.images.length > 0
+    //           ? c.images[0].url || c.images[0]?.src || null
+    //           : null;
+
+    //       return {
+    //         ...event,
+    //         car: {
+    //           id: event.car_mobile_de_id,
+    //           title,
+    //           image,
+    //           url: `https://suchen.mobile.de/fahrzeuge/details.html?id=${event.car_mobile_de_id}`,
+    //         },
+    //       };
+    //     } catch (err) {
+    //       console.error('Error fetching car data for event:', event.title, err);
+    //       return event;
+    //     }
+    //   })
+    // );
 
     return res.json(eventsWithCarData || []);
   } catch (e) {
