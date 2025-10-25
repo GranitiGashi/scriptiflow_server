@@ -47,198 +47,7 @@ async function fetchMobileDeAdById(username, password, mobileAdId) {
   return response.data;
 }
 
-// In-memory guard to avoid concurrent syncs per user
-const inFlightMobileDeSyncByUser = new Map();
-
-// Perform a full sync for a specific user (used by explicit route and background refresh)
-async function performMobileDeSyncForUser(userId) {
-  const credRes = await supabaseAdmin
-    .from('mobile_de_credentials')
-    .select('username, encrypted_password')
-    .eq('user_id', userId)
-    .eq('provider', 'mobile_de')
-    .is('deleted_at', null)
-    .maybeSingle();
-  if (credRes.error || !credRes.data) {
-    return { synced: false, new_listings: 0, total_seen: 0, reason: 'no_credentials' };
-  }
-
-  const [iv, encryptedPassword] = credRes.data.encrypted_password.split(':');
-  const password = decrypt(encryptedPassword, iv);
-  const username = credRes.data.username;
-
-  // Fetch current listings across all pages (paginate)
-  const pageSize = 100;
-  let page = 1;
-  let totalSeen = 0;
-  let newCount = 0;
-
-  // Iterate pages until fewer than pageSize results are returned
-  // Sort by newest to prioritize recent changes
-  while (true) {
-    const searchData = await fetchMobileDeListings(username, password, {
-      'page.number': page,
-      'page.size': pageSize,
-      'sort.field': 'modificationTime',
-      'sort.order': 'DESCENDING',
-    });
-    const ads = Array.isArray(searchData?.['search-result']?.ads?.ad)
-      ? searchData['search-result'].ads.ad
-      : [];
-    if (!ads.length) break;
-    totalSeen += ads.length;
-
-    for (const ad of ads) {
-    const mobileAdId = String(ad.id || ad.mobileAdId || ad['mobile-ad-id'] || '').trim();
-    if (!mobileAdId) continue;
-
-    // Upsert only if new; if exists, update missing details
-    const { data: existing } = await supabaseAdmin
-      .from('mobile_de_listings')
-      .select('mobile_ad_id, details')
-      .eq('user_id', userId)
-      .eq('provider', 'mobile_de')
-      .eq('mobile_ad_id', mobileAdId)
-      .maybeSingle();
-    if (existing) {
-      // Update last_seen
-      await supabaseAdmin
-        .from('mobile_de_listings')
-        .update({ last_seen: new Date().toISOString() })
-        .eq('user_id', userId)
-        .eq('provider', 'mobile_de')
-        .eq('mobile_ad_id', mobileAdId);
-      // If details missing or incomplete, update with best-effort info from ad
-      try {
-        const existingDetails = existing?.details || null;
-        const existingMake = (existingDetails && (existingDetails.make || existingDetails?.vehicle?.make)) ? String(existingDetails.make || existingDetails?.vehicle?.make) : '';
-        const existingModel = (existingDetails && (existingDetails.model || existingDetails?.vehicle?.model)) ? String(existingDetails.model || existingDetails?.vehicle?.model) : '';
-        const merged = { ...(existingDetails || {}), make: existingMake || (ad.make || ad?.vehicle?.make || ''), model: existingModel || (ad.model || ad?.vehicle?.model || '') };
-        if (!existingDetails || !existingMake || !existingModel) {
-          await supabaseAdmin
-            .from('mobile_de_listings')
-            .update({ details: merged })
-            .eq('user_id', userId)
-            .eq('provider', 'mobile_de')
-            .eq('mobile_ad_id', mobileAdId);
-        }
-      } catch {}
-      continue;
-    }
-
-    // Fetch full details for new ad
-    let details = null;
-    let image_xxxl_url = null;
-    let imagesArr = [];
-    try {
-      details = await fetchMobileDeDetails(username, password, mobileAdId);
-      const imgs = Array.isArray(details?.images) ? details.images : [];
-      image_xxxl_url = imgs.find(i => i?.xxxl)?.xxxl || null;
-      imagesArr = imgs.map(i => i?.xxxl || i?.xxl || i?.xl || i?.l || i?.m || i?.s).filter(Boolean);
-    } catch (e) {
-      // Continue even if details fail; we still store the ad id
-    }
-
-    // Merge minimal fields to ensure filters can be built even if details call fails
-    const mergedDetails = {
-      ...(details || {}),
-      make: (details?.make || details?.vehicle?.make || ad.make || ad?.vehicle?.make || null),
-      model: (details?.model || details?.vehicle?.model || ad.model || ad?.vehicle?.model || null),
-      detailPageUrl: (details?.detailPageUrl || ad.detailPageUrl || null),
-    };
-
-    await supabaseAdmin
-      .from('mobile_de_listings')
-      .insert({
-        user_id: userId,
-        provider: 'mobile_de',
-        mobile_ad_id: mobileAdId,
-        details: mergedDetails,
-        image_xxxl_url,
-        images: imagesArr.length ? imagesArr : null,
-        first_seen: new Date().toISOString(),
-        last_seen: new Date().toISOString(),
-      });
-
-    // enqueue background image processing jobs for this listing
-    try {
-      const originalImages = imagesArr.length ? imagesArr : (image_xxxl_url ? [image_xxxl_url] : []);
-      if (originalImages.length) {
-        const jobs = originalImages.slice(0, 10).map((imgUrl, idx) => ({
-          user_id: userId,
-          listing_id: mobileAdId,
-          original_url: imgUrl,
-          provider: 'clipdrop',
-          options: { background: { type: 'white' }, overlayLogo: idx === 0, outputFormat: 'png' },
-        }));
-        await supabaseAdmin.from('image_processing_jobs').insert(jobs);
-      }
-    } catch (e) {
-      // ignore queuing failures to not block sync
-    }
-
-    // Enqueue social posts (facebook + instagram if linked)
-    const platforms = ['facebook', 'instagram'];
-    for (const platform of platforms) {
-      const caption = `${(details?.make || ad.make || '').toString()} ${(details?.model || ad.model || '').toString()}`.trim();
-      await supabaseAdmin
-        .from('social_post_jobs')
-        .insert({
-          user_id: userId,
-          platform,
-          mobile_ad_id: mobileAdId,
-          payload: {
-            images: imagesArr.length ? imagesArr : (image_xxxl_url ? [image_xxxl_url] : []),
-            caption,
-            detail_url: details?.detailPageUrl || ad.detailPageUrl || null,
-          },
-        });
-    }
-      newCount += 1;
-    }
-
-    if (ads.length < pageSize) break;
-    page += 1;
-  }
-
-  // Update last_sync_at
-  await supabaseAdmin
-    .from('mobile_de_credentials')
-    .update({ last_sync_at: new Date().toISOString() })
-    .eq('user_id', userId)
-    .eq('provider', 'mobile_de');
-
-  return { synced: true, new_listings: newCount, total_seen: totalSeen };
-}
-
-// Fire-and-forget background sync with minimal throttling
-async function maybeStartBackgroundSync(userId) {
-  if (inFlightMobileDeSyncByUser.has(userId)) return;
-  try {
-    const { data: cred } = await supabase
-      .from('mobile_de_credentials')
-      .select('last_sync_at')
-      .eq('user_id', userId)
-      .eq('provider', 'mobile_de')
-      .maybeSingle();
-
-    const last = cred?.last_sync_at ? new Date(cred.last_sync_at).getTime() : 0;
-    const now = Date.now();
-    const minIntervalMs = 60 * 1000; // throttle background sync to once per minute per user
-    if (now - last < minIntervalMs) return;
-
-    inFlightMobileDeSyncByUser.set(userId, true);
-    performMobileDeSyncForUser(userId)
-      .catch((err) => {
-        console.error('Background syncMobileDe failed:', err);
-      })
-      .finally(() => {
-        inFlightMobileDeSyncByUser.delete(userId);
-      });
-  } catch (err) {
-    // Ignore background scheduling errors
-  }
-}
+// Clean controller - removed old sync functions
 
 // controllers/mobiledeController.js
 exports.connectMobile = async (req, res) => {
@@ -764,13 +573,13 @@ exports.seedDummyListing = async (req, res) => {
   }
 };
 
-// Sync new listings and enqueue social posts
+// Manual trigger for auto-posting (replaces old sync)
 exports.syncMobileDe = async (req, res) => {
   try {
     const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
     if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
     const userId = authRes.user.id;
-    const result = await performMobileDeSyncForUser(userId);
+    const result = await checkForNewCarsAndPost(userId);
     if (result.reason === 'no_credentials') {
       return res.status(404).json({ error: 'No mobile.de credentials found' });
     }
@@ -814,7 +623,7 @@ async function checkForNewCarsAndPost(userId) {
     const searchData = await fetchMobileDeListings(username, password, {
       'page.number': 1,
       'page.size': 100, // Get recent listings
-      'sort.field': 'creationTime',
+      'sort.field': 'creationDate',
       'sort.order': 'DESCENDING',
     });
 
@@ -832,11 +641,11 @@ async function checkForNewCarsAndPost(userId) {
 
     // Filter ads created after our sync date
     for (const ad of ads) {
-      const mobileAdId = String(ad.id || ad.mobileAdId || ad['mobile-ad-id'] || '').trim();
+      const mobileAdId = String(ad.mobileAdId || '').trim();
       if (!mobileAdId) continue;
 
-      // Get creation date from the ad
-      const creationDate = ad.creationTime || ad.creation_date || ad.created_at;
+      // Get creation date from the ad - use creationDate field
+      const creationDate = ad.creationDate;
       if (!creationDate) continue;
 
       const adCreationDate = new Date(creationDate);
@@ -844,7 +653,10 @@ async function checkForNewCarsAndPost(userId) {
 
       // Only process ads created after our last sync
       if (adCreationDate > syncDateObj) {
-        console.log(`New car found: ${mobileAdId}, created: ${creationDate}`);
+        console.log(`New car found: ${mobileAdId}`);
+        console.log(`  Car creationDate: ${creationDate} (${adCreationDate.toISOString()})`);
+        console.log(`  DB last_sync_at: ${syncDate} (${syncDateObj.toISOString()})`);
+        console.log(`  Is newer: ${adCreationDate > syncDateObj}`);
         
         // Get full details for the new car
         let details = null;
@@ -902,6 +714,8 @@ async function checkForNewCarsAndPost(userId) {
 
         postsToCreate.push(postData);
         newPostsCreated++;
+      } else {
+        console.log(`Car ${mobileAdId} is not newer (created: ${creationDate}, sync: ${syncDate})`);
       }
     }
 
@@ -1029,5 +843,4 @@ exports.runAutoPostingForAllUsers = async () => {
 };
 
 // Expose for worker
-exports.performMobileDeSyncForUser = performMobileDeSyncForUser;
 exports.checkForNewCarsAndPost = checkForNewCarsAndPost;

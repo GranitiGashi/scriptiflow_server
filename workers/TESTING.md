@@ -56,7 +56,11 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 - **Expected**: `new_posts: > 0`, posts created in database
 - **Test**: Run with users who have new cars on mobile.de
 
-#### **Scenario 4: API Errors**
+#### **Scenario 4: Field Comparison Testing**
+- **Expected**: Detailed logging of field comparison
+- **Test**: Run `npm run test-fields <user_id>` to see field comparison logic
+
+#### **Scenario 5: API Errors**
 - **Expected**: Error handling, graceful failure
 - **Test**: Run with invalid mobile.de credentials
 

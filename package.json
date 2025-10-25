@@ -8,7 +8,8 @@
     "dev": "nodemon server.js",
     "worker": "node workers/autoPostingWorker.js",
     "test-worker": "node workers/testWorker.js",
-    "test-user": "node workers/testUser.js"
+    "test-user": "node workers/testUser.js",
+    "test-fields": "node workers/testFieldComparison.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.38.0",
