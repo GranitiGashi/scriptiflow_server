@@ -48,61 +48,111 @@ async function getAuthedCalendar(userId) {
 exports.listEvents = async (req, res) => {
   try {
     const auth = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
-    if (auth.error) return res.status(auth.error.status || 401).json({ error: auth.error.message });
+    if (auth.error)
+      return res.status(auth.error.status || 401).json({ error: auth.error.message });
+
     const user = auth.user;
     const cal = await getAuthedCalendar(user.id);
+
     const now = new Date();
     const past = new Date(now.getTime() - 30 * 24 * 3600 * 1000).toISOString();
     const future = new Date(now.getTime() + 60 * 24 * 3600 * 1000).toISOString();
-    const { data } = await cal.events.list({ calendarId: 'primary', timeMin: past, timeMax: future, singleEvents: true, orderBy: 'startTime', maxResults: 2500 });
 
-    // upsert into local DB for quick retrieval
+    // Fetch from Google Calendar
+    const { data } = await cal.events.list({
+      calendarId: 'primary',
+      timeMin: past,
+      timeMax: future,
+      singleEvents: true,
+      orderBy: 'startTime',
+      maxResults: 2500,
+    });
+
+    // Upsert into local DB for faster retrieval
     const items = Array.isArray(data.items) ? data.items : [];
+
     for (const ev of items) {
-      const start = ev.start?.dateTime || (ev.start?.date ? `${ev.start.date}T00:00:00Z` : null);
-      const end = ev.end?.dateTime || (ev.end?.date ? `${ev.end.date}T00:00:00Z` : null);
+      const start =
+        ev.start?.dateTime || (ev.start?.date ? `${ev.start.date}T00:00:00Z` : null);
+      const end =
+        ev.end?.dateTime || (ev.end?.date ? `${ev.end.date}T00:00:00Z` : null);
       if (!start || !end) continue;
-      // Try to link to a contact by attendee/description email
+
+      // Try linking to a contact by attendee or email in description
       let contactId = null;
       let emailCandidate = null;
       let nameCandidate = null;
+
       if (Array.isArray(ev.attendees) && ev.attendees.length) {
-        const att = ev.attendees.find((a) => a.email && a.responseStatus !== 'declined') || ev.attendees[0];
+        const att =
+          ev.attendees.find((a) => a.email && a.responseStatus !== 'declined') ||
+          ev.attendees[0];
         emailCandidate = att?.email || null;
         nameCandidate = att?.displayName || null;
       }
+
       if (!emailCandidate && typeof ev.description === 'string') {
         const m = ev.description.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
         if (m) emailCandidate = m[0];
       }
+
       if (emailCandidate) {
-        try { contactId = await findOrCreateContact(user.id, { name: nameCandidate, email: emailCandidate }); } catch (_) {}
+        try {
+          contactId = await findOrCreateContact(user.id, {
+            name: nameCandidate,
+            email: emailCandidate,
+          });
+        } catch (_) {}
       }
-      await supabaseAdmin.from('calendar_events').upsert({
-        user_id: user.id,
-        google_event_id: ev.id,
-        calendar_id: ev.organizer?.email || 'primary',
-        title: ev.summary || 'Event',
-        description: ev.description || null,
-        location: ev.location || null,
-        start_time: new Date(start).toISOString(),
-        end_time: new Date(end).toISOString(),
-        contact_id: contactId || null,
-      }, { onConflict: 'user_id,google_event_id' });
+
+      await supabaseAdmin.from('calendar_events').upsert(
+        {
+          user_id: user.id,
+          google_event_id: ev.id,
+          calendar_id: ev.organizer?.email || 'primary',
+          title: ev.summary || 'Event',
+          description: ev.description || null,
+          location: ev.location || null,
+          start_time: new Date(start).toISOString(),
+          end_time: new Date(end).toISOString(),
+          contact_id: contactId || null,
+        },
+        { onConflict: 'user_id,google_event_id' }
+      );
     }
 
-    const { data: rows } = await supabase
+    // 🧠 Apply filters if start_time and end_time are provided in query
+    const { start_time: queryStart, end_time: queryEnd } = req.query;
+
+    let rowsQuery = supabase
       .from('calendar_events')
-      .select('id, google_event_id, title, description, location, start_time, end_time, car_mobile_de_id, contact_id')
+      .select(
+        'id, google_event_id, title, description, location, start_time, end_time, car_mobile_de_id, contact_id'
+      )
       .eq('user_id', user.id)
       .is('deleted_at', null)
       .order('start_time', { ascending: true });
 
+    // ✅ Filter by overlapping range
+    if (queryStart && queryEnd) {
+      rowsQuery = rowsQuery
+        .lte('start_time', queryEnd) // event starts before or during the end of range
+        .gte('end_time', queryStart); // event ends after or during the start of range
+    }
+
+    const { data: rows, error } = await rowsQuery;
+
+    if (error) throw new Error(error.message);
+
     return res.json(rows || []);
   } catch (e) {
-    return res.status(500).json({ error: e.message || 'Failed to list events' });
+    console.error('Error listing events:', e);
+    return res
+      .status(500)
+      .json({ error: e.message || 'Failed to list events' });
   }
 };
+
 
 async function findOrCreateContact(userId, { name, email }) {
   if (!email && !name) return null;
