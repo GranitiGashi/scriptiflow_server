@@ -53,7 +53,7 @@ GET /status
 ## Database Schema
 
 The system uses these fields in `mobile_de_credentials`:
-- `first_connected_at`: When user first connected mobile.de
+- `created_at`: When user first connected mobile.de (database default)
 - `last_sync_at`: Last time we checked for new cars
 - `last_sync_at` is updated after each check
 

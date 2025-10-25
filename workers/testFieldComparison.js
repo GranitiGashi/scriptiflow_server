@@ -36,7 +36,7 @@ async function testFieldComparison(userId) {
     
     console.log('\n🔍 Field Comparison Logic:');
     console.log('  - Checks: ad.creationDate (from mobile.de API)');
-    console.log('  - Compares with: last_sync_at || first_connected_at (from database)');
+    console.log('  - Compares with: last_sync_at || created_at (from database)');
     console.log('  - Only processes cars where: creationDate > last_sync_at');
     console.log('  - Updates last_sync_at to current time after check');
     

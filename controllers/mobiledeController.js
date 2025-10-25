@@ -75,18 +75,6 @@ exports.connectMobile = async (req, res) => {
 
     console.log('Upserting credentials:', { user_id: userId, username, encrypted_password: `${iv}:${encryptedData}` });
 
-    // Check if this is a new connection (no existing credentials)
-    const existingCreds = await supabase
-      .from('mobile_de_credentials')
-      .select('id, first_connected_at')
-      .eq('user_id', userId)
-      .eq('provider', 'mobile_de')
-      .is('deleted_at', null)
-      .maybeSingle();
-
-    const isNewConnection = !existingCreds.data;
-    const firstConnectedAt = isNewConnection ? new Date().toISOString() : existingCreds.data?.first_connected_at;
-
     const upsertRes = await supabase
       .from('mobile_de_credentials')
       .upsert(
@@ -96,7 +84,6 @@ exports.connectMobile = async (req, res) => {
           username, 
           encrypted_password: `${iv}:${encryptedData}`, 
           deleted_at: null,
-          first_connected_at: firstConnectedAt,
           last_sync_at: new Date().toISOString()
         },
         { onConflict: ['user_id', 'provider'] }
@@ -598,7 +585,7 @@ async function checkForNewCarsAndPost(userId) {
     // Get user credentials
     const credRes = await supabaseAdmin
       .from('mobile_de_credentials')
-      .select('username, encrypted_password, last_sync_at, first_connected_at')
+      .select('username, encrypted_password, last_sync_at, created_at')
       .eq('user_id', userId)
       .eq('provider', 'mobile_de')
       .is('deleted_at', null)
@@ -613,10 +600,10 @@ async function checkForNewCarsAndPost(userId) {
     const password = decrypt(encryptedPassword, iv);
     const username = credRes.data.username;
     const lastSyncAt = credRes.data.last_sync_at;
-    const firstConnectedAt = credRes.data.first_connected_at;
+    const createdAt = credRes.data.created_at;
 
-    // Use first_connected_at as the baseline if no last_sync_at exists
-    const syncDate = lastSyncAt || firstConnectedAt;
+    // Use created_at as the baseline if no last_sync_at exists
+    const syncDate = lastSyncAt || createdAt;
     console.log(`Sync date for user ${userId}: ${syncDate}`);
 
     // Fetch recent listings from mobile.de
