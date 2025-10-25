@@ -1,42 +1,30 @@
 {
-  "name": "scriptiflow_server",
+  "name": "scriptiflow-server",
   "version": "1.0.0",
-  "description": "",
+  "description": "ScriptiFlow Backend Server",
   "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "nodemon server.js",
     "start": "node server.js",
-    "worker": "node worker/index.js"
+    "dev": "nodemon server.js",
+    "worker": "node workers/scheduledWorker.js",
+    "worker-health": "node workers/healthEndpoint.js",
+    "test-worker": "node workers/testAutoPosting.js",
+    "auto-posting": "node workers/autoPostingWorker.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
-    "@azure/identity": "^4.10.1",
-    "@microsoft/microsoft-graph-client": "^3.0.7",
-    "@supabase/supabase-js": "^2.53.0",
-    "archiver": "^7.0.1",
-    "axios": "^1.11.0",
-    "bcrypt": "^6.0.0",
-    "body-parser": "^2.2.0",
+    "express": "^4.18.2",
     "cors": "^2.8.5",
-    "crypto": "^1.0.1",
-    "dotenv": "^17.2.1",
-    "express": "^5.1.0",
-    "form-data": "^4.0.1",
-    "googleapis": "^131.0.0",
-    "jsonwebtoken": "^9.0.2",
-    "multer": "^2.0.2",
-    "nodemailer": "^6.9.14",
-    "openai": "^5.12.2",
-    "pg": "^8.16.3",
-    "postgres": "^3.4.7",
-    "sharp": "^0.33.5",
-    "stripe": "^18.4.0",
-    "uuid": "^11.1.0"
+    "helmet": "^7.0.0",
+    "dotenv": "^16.3.1",
+    "@supabase/supabase-js": "^2.38.0",
+    "axios": "^1.6.0",
+    "node-cron": "^3.0.2",
+    "crypto": "^1.0.1"
   },
   "devDependencies": {
-    "nodemon": "^3.1.10"
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

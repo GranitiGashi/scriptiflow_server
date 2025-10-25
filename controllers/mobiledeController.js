@@ -266,10 +266,30 @@ exports.connectMobile = async (req, res) => {
 
     console.log('Upserting credentials:', { user_id: userId, username, encrypted_password: `${iv}:${encryptedData}` });
 
+    // Check if this is a new connection (no existing credentials)
+    const existingCreds = await supabase
+      .from('mobile_de_credentials')
+      .select('id, first_connected_at')
+      .eq('user_id', userId)
+      .eq('provider', 'mobile_de')
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    const isNewConnection = !existingCreds.data;
+    const firstConnectedAt = isNewConnection ? new Date().toISOString() : existingCreds.data?.first_connected_at;
+
     const upsertRes = await supabase
       .from('mobile_de_credentials')
       .upsert(
-        { user_id: userId, provider: 'mobile_de', username, encrypted_password: `${iv}:${encryptedData}`, deleted_at: null },
+        { 
+          user_id: userId, 
+          provider: 'mobile_de', 
+          username, 
+          encrypted_password: `${iv}:${encryptedData}`, 
+          deleted_at: null,
+          first_connected_at: firstConnectedAt,
+          last_sync_at: new Date().toISOString()
+        },
         { onConflict: ['user_id', 'provider'] }
       );
 
@@ -761,5 +781,253 @@ exports.syncMobileDe = async (req, res) => {
   }
 };
 
+// Check for new cars and create posts (hourly job)
+async function checkForNewCarsAndPost(userId) {
+  try {
+    console.log(`Checking for new cars for user ${userId}`);
+    
+    // Get user credentials
+    const credRes = await supabaseAdmin
+      .from('mobile_de_credentials')
+      .select('username, encrypted_password, last_sync_at, first_connected_at')
+      .eq('user_id', userId)
+      .eq('provider', 'mobile_de')
+      .is('deleted_at', null)
+      .maybeSingle();
+    
+    if (credRes.error || !credRes.data) {
+      console.log(`No credentials found for user ${userId}`);
+      return { success: false, reason: 'no_credentials' };
+    }
+
+    const [iv, encryptedPassword] = credRes.data.encrypted_password.split(':');
+    const password = decrypt(encryptedPassword, iv);
+    const username = credRes.data.username;
+    const lastSyncAt = credRes.data.last_sync_at;
+    const firstConnectedAt = credRes.data.first_connected_at;
+
+    // Use first_connected_at as the baseline if no last_sync_at exists
+    const syncDate = lastSyncAt || firstConnectedAt;
+    console.log(`Sync date for user ${userId}: ${syncDate}`);
+
+    // Fetch recent listings from mobile.de
+    const searchData = await fetchMobileDeListings(username, password, {
+      'page.number': 1,
+      'page.size': 100, // Get recent listings
+      'sort.field': 'creationTime',
+      'sort.order': 'DESCENDING',
+    });
+
+    const ads = Array.isArray(searchData?.['search-result']?.ads?.ad)
+      ? searchData['search-result'].ads.ad
+      : [];
+
+    if (!ads.length) {
+      console.log(`No ads found for user ${userId}`);
+      return { success: true, new_posts: 0, total_checked: 0 };
+    }
+
+    let newPostsCreated = 0;
+    const postsToCreate = [];
+
+    // Filter ads created after our sync date
+    for (const ad of ads) {
+      const mobileAdId = String(ad.id || ad.mobileAdId || ad['mobile-ad-id'] || '').trim();
+      if (!mobileAdId) continue;
+
+      // Get creation date from the ad
+      const creationDate = ad.creationTime || ad.creation_date || ad.created_at;
+      if (!creationDate) continue;
+
+      const adCreationDate = new Date(creationDate);
+      const syncDateObj = new Date(syncDate);
+
+      // Only process ads created after our last sync
+      if (adCreationDate > syncDateObj) {
+        console.log(`New car found: ${mobileAdId}, created: ${creationDate}`);
+        
+        // Get full details for the new car
+        let details = null;
+        let image_xxxl_url = null;
+        let imagesArr = [];
+        
+        try {
+          details = await fetchMobileDeDetails(username, password, mobileAdId);
+          const imgs = Array.isArray(details?.images) ? details.images : [];
+          image_xxxl_url = imgs.find(i => i?.xxxl)?.xxxl || null;
+          imagesArr = imgs.map(i => i?.xxxl || i?.xxl || i?.xl || i?.l || i?.m || i?.s).filter(Boolean);
+        } catch (e) {
+          console.log(`Failed to get details for ${mobileAdId}:`, e.message);
+          // Continue with basic info from search result
+          details = {
+            make: ad.make || ad?.vehicle?.make || '',
+            model: ad.model || ad?.vehicle?.model || '',
+            detailPageUrl: ad.detailPageUrl || null
+          };
+        }
+
+        // Store the listing in our database
+        const mergedDetails = {
+          ...(details || {}),
+          make: (details?.make || details?.vehicle?.make || ad.make || ad?.vehicle?.make || null),
+          model: (details?.model || details?.vehicle?.model || ad.model || ad?.vehicle?.model || null),
+          detailPageUrl: (details?.detailPageUrl || ad.detailPageUrl || null),
+        };
+
+        await supabaseAdmin
+          .from('mobile_de_listings')
+          .insert({
+            user_id: userId,
+            provider: 'mobile_de',
+            mobile_ad_id: mobileAdId,
+            details: mergedDetails,
+            image_xxxl_url,
+            images: imagesArr.length ? imagesArr : null,
+            first_seen: new Date().toISOString(),
+            last_seen: new Date().toISOString(),
+          });
+
+        // Prepare post data
+        const caption = `${(details?.make || ad.make || '').toString()} ${(details?.model || ad.model || '').toString()}`.trim();
+        const postData = {
+          user_id: userId,
+          mobile_ad_id: mobileAdId,
+          images: imagesArr.length ? imagesArr : (image_xxxl_url ? [image_xxxl_url] : []),
+          caption,
+          detail_url: details?.detailPageUrl || ad.detailPageUrl || null,
+          make: details?.make || ad.make || '',
+          model: details?.model || ad.model || '',
+          created_at: creationDate
+        };
+
+        postsToCreate.push(postData);
+        newPostsCreated++;
+      }
+    }
+
+    // Create social posts for all new cars
+    if (postsToCreate.length > 0) {
+      console.log(`Creating ${postsToCreate.length} social posts for user ${userId}`);
+      
+      for (const postData of postsToCreate) {
+        // Create posts for Facebook and Instagram
+        for (const platform of ['facebook', 'instagram']) {
+          await supabaseAdmin
+            .from('social_post_jobs')
+            .insert({
+              user_id: userId,
+              platform,
+              mobile_ad_id: postData.mobile_ad_id,
+              payload: {
+                images: postData.images,
+                caption: postData.caption,
+                detail_url: postData.detail_url,
+                make: postData.make,
+                model: postData.model,
+                created_at: postData.created_at
+              },
+            });
+        }
+      }
+    }
+
+    // Update the sync date to current time
+    await supabaseAdmin
+      .from('mobile_de_credentials')
+      .update({ last_sync_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .eq('provider', 'mobile_de');
+
+    console.log(`Auto-posting completed for user ${userId}: ${newPostsCreated} new posts created`);
+    return { 
+      success: true, 
+      new_posts: newPostsCreated, 
+      total_checked: ads.length,
+      posts_created: postsToCreate.length
+    };
+
+  } catch (err) {
+    console.error(`Auto-posting failed for user ${userId}:`, err);
+    return { success: false, error: err.message };
+  }
+}
+
+// Manual trigger for auto-posting check
+exports.triggerAutoPosting = async (req, res) => {
+  try {
+    const authRes = await getUserFromRequest(req, { setSession: true, allowRefresh: true });
+    if (authRes.error) return res.status(authRes.error.status || 401).json({ error: authRes.error.message });
+    const userId = authRes.user.id;
+
+    const result = await checkForNewCarsAndPost(userId);
+    return res.json(result);
+  } catch (err) {
+    console.error('triggerAutoPosting error:', err);
+    return res.status(500).json({ error: 'Failed to trigger auto-posting', details: err.message });
+  }
+};
+
+// Worker function to check all users with mobile.de credentials
+exports.runAutoPostingForAllUsers = async () => {
+  try {
+    console.log('Starting auto-posting check for all users...');
+    
+    // Get all users with mobile.de credentials
+    const { data: users, error } = await supabaseAdmin
+      .from('mobile_de_credentials')
+      .select('user_id')
+      .eq('provider', 'mobile_de')
+      .is('deleted_at', null);
+
+    if (error) {
+      console.error('Failed to get users:', error);
+      return { success: false, error: error.message };
+    }
+
+    if (!users || users.length === 0) {
+      console.log('No users with mobile.de credentials found');
+      return { success: true, users_processed: 0 };
+    }
+
+    console.log(`Found ${users.length} users with mobile.de credentials`);
+
+    const results = [];
+    let totalNewPosts = 0;
+
+    // Process each user
+    for (const user of users) {
+      try {
+        console.log(`Processing user ${user.user_id}...`);
+        const result = await checkForNewCarsAndPost(user.user_id);
+        results.push({ user_id: user.user_id, ...result });
+        
+        if (result.success && result.new_posts) {
+          totalNewPosts += result.new_posts;
+        }
+      } catch (err) {
+        console.error(`Failed to process user ${user.user_id}:`, err);
+        results.push({ 
+          user_id: user.user_id, 
+          success: false, 
+          error: err.message 
+        });
+      }
+    }
+
+    console.log(`Auto-posting completed for ${users.length} users. Total new posts: ${totalNewPosts}`);
+    return { 
+      success: true, 
+      users_processed: users.length,
+      total_new_posts: totalNewPosts,
+      results 
+    };
+
+  } catch (err) {
+    console.error('runAutoPostingForAllUsers error:', err);
+    return { success: false, error: err.message };
+  }
+};
+
 // Expose for worker
 exports.performMobileDeSyncForUser = performMobileDeSyncForUser;
+exports.checkForNewCarsAndPost = checkForNewCarsAndPost;

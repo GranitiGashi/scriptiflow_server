@@ -14,5 +14,6 @@ router.get('/mobilede/listings', mobiledeController.getMobileDeListings);
 router.get('/mobilede/filters', mobiledeController.getMobileDeFilters);
 router.post('/mobilede/seed-dummy', mobiledeController.seedDummyListing);
 router.get('/mobilede/ad-details', mobiledeController.getMobileDeAdDetails);
+router.post('/mobilede/trigger-auto-posting', mobiledeController.triggerAutoPosting);
 
 module.exports = router;
