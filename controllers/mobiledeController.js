@@ -4,6 +4,7 @@ const supabaseAdmin = require('../config/supabaseAdmin');
 const { getUserFromRequest } = require('../utils/authUser');
 const { encrypt, decrypt } = require('../utils/crypto');
 const axios = require('axios');
+const openai = require('../utils/openaiClient');
 // const supabaseAdmin = require('../config/supabaseAdmin');
 
 async function fetchMobileDeListings(username, password, params = {}) {
@@ -45,6 +46,40 @@ async function fetchMobileDeAdById(username, password, mobileAdId) {
     throw new Error(`mobile.de ad fetch failed: ${response.status} ${body}`);
   }
   return response.data;
+}
+
+// Generate AI caption for car post
+async function generateCarCaption(make, model, details = {}) {
+  try {
+    const prompt = `Create an engaging social media caption for a car listing. 
+    
+Car Details:
+- Make: ${make}
+- Model: ${model}
+- Additional Info: ${JSON.stringify(details)}
+
+Requirements:
+- Keep it under 200 characters
+- Make it engaging and professional
+- Include relevant hashtags
+- Focus on the car's appeal
+- Use emojis sparingly but effectively
+
+Generate a compelling caption that would make people want to learn more about this car:`;
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 150,
+      temperature: 0.7,
+    });
+
+    return response.choices[0].message.content.trim();
+  } catch (error) {
+    console.log('OpenAI caption generation failed:', error.message);
+    // Fallback to basic caption
+    return `${make} ${model} - Check out this amazing vehicle! 🚗 #${make.replace(/\s+/g, '')} #${model.replace(/\s+/g, '')} #Cars #AutoDealer`;
+  }
 }
 
 // Clean controller - removed old sync functions
@@ -622,7 +657,9 @@ async function checkForNewCarsAndPost(userId) {
         'sort.order': 'DESCENDING',
       });
 
-      const ads = Array.isArray(searchData?.['search-result']?.ads?.ad)
+      const ads = Array.isArray(searchData?.ads)
+        ? searchData.ads
+        : Array.isArray(searchData?.['search-result']?.ads?.ad)
         ? searchData['search-result'].ads.ad
         : [];
 
@@ -665,7 +702,7 @@ async function checkForNewCarsAndPost(userId) {
       const adCreationDate = new Date(creationDate);
       const syncDateObj = new Date(syncDate);
 
-      // Check if this car is newer than our sync date
+      // ONLY process cars that are newer than our sync date
       if (adCreationDate > syncDateObj) {
         // Check if we already processed this car
         const { data: existingListing } = await supabaseAdmin
@@ -706,6 +743,15 @@ async function checkForNewCarsAndPost(userId) {
           };
         }
 
+        // Get images from search result if details failed
+        if (!imagesArr.length && ad.images) {
+          const searchImages = Array.isArray(ad.images) ? ad.images : [];
+          imagesArr = searchImages.map(img => img?.xxxl || img?.xxl || img?.xl || img?.l || img?.m || img?.s).filter(Boolean);
+        }
+
+        // Limit to first 10 images
+        imagesArr = imagesArr.slice(0, 10);
+
         // Store the listing in our database
         const mergedDetails = {
           ...(details || {}),
@@ -727,16 +773,31 @@ async function checkForNewCarsAndPost(userId) {
             last_seen: new Date().toISOString(),
           });
 
+        // Generate AI caption
+        const make = (details?.make || details?.vehicle?.make || ad.make || ad?.vehicle?.make || '').toString().trim();
+        const model = (details?.model || details?.vehicle?.model || ad.model || ad?.vehicle?.model || '').toString().trim();
+        
+        console.log(`🤖 Generating AI caption for ${make} ${model}...`);
+        const aiCaption = await generateCarCaption(make, model, details);
+        console.log(`✅ Generated caption: ${aiCaption.substring(0, 50)}...`);
+
+        // Ensure we have at least one image
+        const finalImages = imagesArr.length ? imagesArr : (image_xxxl_url ? [image_xxxl_url] : []);
+        
+        if (!finalImages.length) {
+          console.log(`⚠️  No images found for ${mobileAdId}, skipping post creation`);
+          continue;
+        }
+
         // Prepare post data
-        const caption = `${(details?.make || ad.make || '').toString()} ${(details?.model || ad.model || '').toString()}`.trim();
         const postData = {
           user_id: userId,
           mobile_ad_id: mobileAdId,
-          images: imagesArr.length ? imagesArr : (image_xxxl_url ? [image_xxxl_url] : []),
-          caption,
+          images: finalImages,
+          caption: aiCaption,
           detail_url: details?.detailPageUrl || ad.detailPageUrl || null,
-          make: details?.make || ad.make || '',
-          model: details?.model || ad.model || '',
+          make: make,
+          model: model,
           created_at: creationDate
         };
 
