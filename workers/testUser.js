@@ -1,8 +1,17 @@
-// workers/testAutoPosting.js
+// workers/testUser.js
 const { checkForNewCarsAndPost } = require('../controllers/mobiledeController');
 
-// Test auto-posting for a specific user
-async function testAutoPosting(userId) {
+// Get user ID from command line argument
+const userId = process.argv[2];
+
+if (!userId) {
+  console.error('❌ Please provide a user ID');
+  console.log('Usage: node workers/testUser.js <user_id>');
+  console.log('Example: node workers/testUser.js 123e4567-e89b-12d3-a456-426614174000');
+  process.exit(1);
+}
+
+async function testUser(userId) {
   console.log('🧪 Testing Auto-Posting for User:', userId);
   console.log('Timestamp:', new Date().toISOString());
   console.log('---');
@@ -10,7 +19,7 @@ async function testAutoPosting(userId) {
   try {
     const result = await checkForNewCarsAndPost(userId);
     
-    console.log('📊 Results:');
+    console.log('📊 Test Results:');
     console.log('  Success:', result.success);
     console.log('  New Posts:', result.new_posts || 0);
     console.log('  Total Checked:', result.total_checked || 0);
@@ -32,16 +41,7 @@ async function testAutoPosting(userId) {
   console.log('✅ Test completed');
 }
 
-// Get user ID from command line argument
-const userId = process.argv[2];
-
-if (!userId) {
-  console.error('❌ Please provide a user ID');
-  console.log('Usage: node workers/testAutoPosting.js <user_id>');
-  process.exit(1);
-}
-
-testAutoPosting(userId)
+testUser(userId)
   .then(() => process.exit(0))
   .catch((err) => {
     console.error('Test failed:', err);

@@ -6,10 +6,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "worker": "node workers/scheduledWorker.js",
-    "worker-health": "node workers/healthEndpoint.js",
-    "test-worker": "node workers/testAutoPosting.js",
-    "auto-posting": "node workers/autoPostingWorker.js"
+    "worker": "node workers/autoPostingWorker.js",
+    "test-worker": "node workers/testWorker.js",
+    "test-user": "node workers/testUser.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.38.0",

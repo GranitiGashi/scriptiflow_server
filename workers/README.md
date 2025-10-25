@@ -1,11 +1,11 @@
 # Auto-Posting Worker
 
-This worker automatically checks for new cars on mobile.de and creates social media posts.
+This worker automatically checks for new cars on mobile.de and creates social media posts every 5 minutes.
 
 ## How it works
 
 1. **Connection Tracking**: When a user connects mobile.de, we save `first_connected_at` timestamp
-2. **Hourly Checks**: Every hour, we check for cars created after the last sync date
+2. **5-Minute Checks**: Every 5 minutes, we check for cars created after the last sync date
 3. **Smart Filtering**: Only cars with `creationTime` after our sync date are processed
 4. **Batch Processing**: Multiple new cars are processed efficiently
 5. **Sync Updates**: After each check, we update the sync date
@@ -14,68 +14,40 @@ This worker automatically checks for new cars on mobile.de and creates social me
 
 ### 1. Manual Testing
 ```bash
-# Run the worker once
-node workers/autoPostingWorker.js
+# Run the worker
+npm run worker
 ```
 
-### 2. Cron Job Setup (Linux/Mac)
+### 2. Render Background Worker (Recommended)
+1. Create a Background Worker service in Render
+2. Set Build Command: `npm install`
+3. Set Start Command: `npm run worker`
+4. Add environment variables
+
+### 3. Environment Variables
 ```bash
-# Edit crontab
-crontab -e
-
-# Add this line to run every hour
-0 * * * * cd /path/to/scriptiflow_server && node workers/autoPostingWorker.js >> logs/auto-posting.log 2>&1
-```
-
-### 3. Windows Task Scheduler
-1. Open Task Scheduler
-2. Create Basic Task
-3. Set trigger to "Daily" with "Repeat task every: 1 hour"
-4. Action: Start a program
-5. Program: `node`
-6. Arguments: `workers/autoPostingWorker.js`
-7. Start in: `C:\path\to\scriptiflow_server`
-
-### 4. PM2 Process Manager (Recommended)
-```bash
-# Install PM2
-npm install -g pm2
-
-# Create ecosystem file
-cat > ecosystem.config.js << EOF
-module.exports = {
-  apps: [{
-    name: 'auto-posting-worker',
-    script: 'workers/autoPostingWorker.js',
-    cron_restart: '0 * * * *', // Every hour
-    autorestart: false,
-    watch: false,
-    max_memory_restart: '1G',
-    env: {
-      NODE_ENV: 'production'
-    }
-  }]
-};
-EOF
-
-# Start with PM2
-pm2 start ecosystem.config.js
-pm2 save
-pm2 startup
+NODE_ENV=production
+SUPABASE_URL=your_supabase_url
+SUPABASE_ANON_KEY=your_supabase_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+RUN_ON_STARTUP=false
 ```
 
 ## API Endpoints
 
-### Manual Trigger
+### Health Check
 ```bash
-POST /api/mobilede/trigger-auto-posting
-Authorization: Bearer <token>
+GET /health
 ```
 
-### Check Status
+### Manual Trigger
 ```bash
-GET /api/mobilede/status
-Authorization: Bearer <token>
+POST /trigger
+```
+
+### Status Check
+```bash
+GET /status
 ```
 
 ## Database Schema
@@ -91,7 +63,7 @@ The worker logs:
 - ✅ Successful operations
 - ❌ Errors and failures
 - 📊 Statistics (users processed, new posts)
-- 📋 Individual user results
+- 📈 Total runs and posts created
 
 ## Error Handling
 
@@ -102,6 +74,7 @@ The worker logs:
 
 ## Performance
 
+- **5-minute intervals**: Frequent checks for new cars
 - **Batch processing**: Multiple cars processed together
 - **Efficient queries**: Only fetch recent listings
 - **Smart filtering**: Only process truly new cars
@@ -114,3 +87,4 @@ Check logs for:
 - Number of new posts created
 - API errors and retries
 - Database connection issues
+- Total runs and posts statistics
