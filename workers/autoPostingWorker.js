@@ -113,7 +113,7 @@ app.listen(PORT, () => {
 // Schedule the auto-posting job every 5 minutes
 console.log('🕐 Setting up auto-posting (every 5 minutes)...');
 
-cron.schedule('*/5 * * * *', runAutoPostingJob, {
+cron.schedule('*/1 * * * *', runAutoPostingJob, {
   scheduled: true,
   timezone: "UTC"
 });

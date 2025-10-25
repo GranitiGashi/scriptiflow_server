@@ -606,44 +606,85 @@ async function checkForNewCarsAndPost(userId) {
     const syncDate = lastSyncAt || createdAt;
     console.log(`Sync date for user ${userId}: ${syncDate}`);
 
-    // Fetch recent listings from mobile.de
-    const searchData = await fetchMobileDeListings(username, password, {
-      'page.number': 1,
-      'page.size': 100, // Get recent listings
-      'sort.field': 'creationDate',
-      'sort.order': 'DESCENDING',
-    });
+    // Fetch ALL listings from mobile.de (paginate through all pages)
+    const pageSize = 100;
+    let page = 1;
+    let allAds = [];
+    let hasMorePages = true;
 
-    const ads = Array.isArray(searchData?.['search-result']?.ads?.ad)
-      ? searchData['search-result'].ads.ad
-      : [];
+    console.log(`Fetching all cars from mobile.de for user ${userId}...`);
 
-    if (!ads.length) {
-      console.log(`No ads found for user ${userId}`);
+    while (hasMorePages) {
+      const searchData = await fetchMobileDeListings(username, password, {
+        'page.number': page,
+        'page.size': pageSize,
+        'sort.field': 'creationDate',
+        'sort.order': 'DESCENDING',
+      });
+
+      const ads = Array.isArray(searchData?.['search-result']?.ads?.ad)
+        ? searchData['search-result'].ads.ad
+        : [];
+
+      if (!ads.length) {
+        hasMorePages = false;
+        break;
+      }
+
+      allAds = allAds.concat(ads);
+      console.log(`Fetched page ${page}: ${ads.length} cars (total: ${allAds.length})`);
+
+      if (ads.length < pageSize) {
+        hasMorePages = false;
+      } else {
+        page++;
+      }
+    }
+
+    console.log(`Total cars fetched: ${allAds.length}`);
+
+    if (!allAds.length) {
+      console.log(`No cars found for user ${userId}`);
       return { success: true, new_posts: 0, total_checked: 0 };
     }
 
     let newPostsCreated = 0;
     const postsToCreate = [];
 
-    // Filter ads created after our sync date
-    for (const ad of ads) {
+    // Check ALL cars and find new ones
+    console.log(`Checking ${allAds.length} cars against sync date: ${syncDate}`);
+    
+    for (const ad of allAds) {
       const mobileAdId = String(ad.mobileAdId || '').trim();
       if (!mobileAdId) continue;
 
-      // Get creation date from the ad - use creationDate field
+      // Get creation date from the ad
       const creationDate = ad.creationDate;
       if (!creationDate) continue;
 
       const adCreationDate = new Date(creationDate);
       const syncDateObj = new Date(syncDate);
 
-      // Only process ads created after our last sync
+      // Check if this car is newer than our sync date
       if (adCreationDate > syncDateObj) {
-        console.log(`New car found: ${mobileAdId}`);
+        // Check if we already processed this car
+        const { data: existingListing } = await supabaseAdmin
+          .from('mobile_de_listings')
+          .select('mobile_ad_id')
+          .eq('user_id', userId)
+          .eq('provider', 'mobile_de')
+          .eq('mobile_ad_id', mobileAdId)
+          .maybeSingle();
+
+        if (existingListing) {
+          console.log(`⏭️  Car ${mobileAdId} already processed, skipping`);
+          continue;
+        }
+
+        console.log(`✅ NEW CAR FOUND: ${mobileAdId}`);
         console.log(`  Car creationDate: ${creationDate} (${adCreationDate.toISOString()})`);
-        console.log(`  DB last_sync_at: ${syncDate} (${syncDateObj.toISOString()})`);
-        console.log(`  Is newer: ${adCreationDate > syncDateObj}`);
+        console.log(`  DB sync date: ${syncDate} (${syncDateObj.toISOString()})`);
+        console.log(`  Time difference: ${Math.round((adCreationDate - syncDateObj) / (1000 * 60))} minutes newer`);
         
         // Get full details for the new car
         let details = null;
@@ -702,7 +743,8 @@ async function checkForNewCarsAndPost(userId) {
         postsToCreate.push(postData);
         newPostsCreated++;
       } else {
-        console.log(`Car ${mobileAdId} is not newer (created: ${creationDate}, sync: ${syncDate})`);
+        // Car is not newer - skip it
+        console.log(`⏭️  Car ${mobileAdId} is older (created: ${creationDate})`);
       }
     }
 
@@ -739,11 +781,16 @@ async function checkForNewCarsAndPost(userId) {
       .eq('user_id', userId)
       .eq('provider', 'mobile_de');
 
-    console.log(`Auto-posting completed for user ${userId}: ${newPostsCreated} new posts created`);
+    console.log(`\n📊 AUTO-POSTING SUMMARY for user ${userId}:`);
+    console.log(`  Total cars checked: ${allAds.length}`);
+    console.log(`  New cars found: ${newPostsCreated}`);
+    console.log(`  Social posts created: ${postsToCreate.length * 2} (Facebook + Instagram)`);
+    console.log(`  Sync date updated to: ${new Date().toISOString()}`);
+    
     return { 
       success: true, 
       new_posts: newPostsCreated, 
-      total_checked: ads.length,
+      total_checked: allAds.length,
       posts_created: postsToCreate.length
     };
 
