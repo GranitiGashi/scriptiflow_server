@@ -640,37 +640,56 @@ exports.getMobileDeFilters = async (req, res) => {
     const wantedMakeRaw = typeof req.query.make === 'string' ? req.query.make : undefined;
     const wantedMake = wantedMakeRaw ? String(wantedMakeRaw).toUpperCase() : undefined;
 
-    // Enumerate inventory directly from mobile.de API (all pages)
-    const makes = new Set();
-    const models = new Set();
-    const pageSize = 100;
-    let page = 1;
-
-    while (true) {
-      const data = await fetchMobileDeListings(username, password, {
-        'page.number': page,
-        'page.size': pageSize,
+    // Use the same approach as getUserCars but with larger page size to get all cars
+    const auth = 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
+    
+    // Get all cars with a large page size
+    const response = await axios.get('https://services.mobile.de/search-api/search', {
+      headers: { Authorization: auth, Accept: 'application/vnd.de.mobile.api+json' },
+      params: {
+        'page.number': 1,
+        'page.size': 1000, // Get more cars to extract makes/models
         'sort.field': 'makeModel',
         'sort.order': 'ASCENDING',
-      });
-      const ads = Array.isArray(data?.['search-result']?.ads?.ad)
-        ? data['search-result'].ads.ad
-        : [];
-      if (!ads.length) break;
+      },
+      validateStatus: () => true,
+    });
 
-      for (const ad of ads) {
-        const make = (ad?.vehicle?.make?.['@key'] || ad?.vehicle?.make || ad?.make || '').toString().toUpperCase();
-        const model = (ad?.vehicle?.model?.['@key'] || ad?.vehicle?.model || ad?.model || '').toString().toUpperCase();
-        if (make) makes.add(make);
-        if (wantedMake && make === wantedMake && model) models.add(model);
+    if (response.status < 200 || response.status >= 300) {
+      return res.status(502).json({ error: 'mobile.de request failed', status: response.status, body: response.data });
+    }
+
+    const data = response.data;
+    const rawCars = Array.isArray(data?.['search-result']?.ads?.ad)
+      ? data['search-result'].ads.ad
+      : Array.isArray(data?.ads)
+      ? data.ads
+      : Array.isArray(data)
+      ? data
+      : [];
+
+    // Extract makes and models
+    const makes = new Set();
+    const models = new Set();
+
+    for (const ad of rawCars) {
+      const make = (ad?.vehicle?.make?.['@key'] || ad?.vehicle?.make || ad?.make || '').toString().trim();
+      const model = (ad?.vehicle?.model?.['@key'] || ad?.vehicle?.model || ad?.model || '').toString().trim();
+      
+      if (make) makes.add(make);
+      if (wantedMake && make.toUpperCase() === wantedMake && model) {
+        models.add(model);
       }
-
-      if (ads.length < pageSize) break;
-      page += 1;
     }
 
     const result = { makes: Array.from(makes).sort() };
-    if (wantedMake) Object.assign(result, { models: Array.from(models).sort() });
+    if (wantedMake) {
+      result.models = Array.from(models).sort();
+    }
+    
+    console.log('Mobile.de filters result:', result);
+    console.log('Total cars processed:', rawCars.length);
+    console.log('Unique makes found:', Array.from(makes).sort());
     return res.json(result);
   } catch (err) {
     console.error('getMobileDeFilters error:', err);
